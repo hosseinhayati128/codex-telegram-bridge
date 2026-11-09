@@ -8,6 +8,10 @@ Install the official ChatGPT desktop app, Node.js 24.5 or later, and bubblewrap.
 
 Use one active service per Telegram bot token. The Ubuntu doctor checks live service and desktop connectivity. Ubuntu Desktop and keyring compatibility still need validation on the target machine.
 
+## Bot language
+
+Open `/menu` → Settings → Bot language and choose **فارسی** or **English**. Persian remains the default. The saved choice applies to this bot’s menus, help, notices, and approval controls across chats. ChatGPT replies, chat titles, original questions/options, and file contents keep their own language. Previously sent Telegram messages keep their original text.
+
 ## Windows source
 
 The Windows launcher, broker, supervisor, and installation helpers are retained as source. Fresh Windows provisioning requires local Codex paths, a qualified build, and locally prepared DPAPI pairing files. The installed Windows configuration is machine-specific.

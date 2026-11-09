@@ -1,10 +1,11 @@
+import {translator} from './i18n.mjs';
 import {stringifyWire} from './wire.mjs';
 export class TelegramNative {
- constructor({api,chatId,title}){Object.assign(this,{api,chatId,title});this.active=new Map();this.prompts=new Map();}
+ constructor({api,chatId,title,language=()=> 'fa'}){Object.assign(this,{api,chatId,title});this.t=translator(language);this.active=new Map();this.prompts=new Map();}
  async show(request,route){
   if(!/^[A-Za-z0-9_-]{24}$/.test(request.ticket)||request.expiresAt<Date.now())return;
   const r={...request,route,state:'rendering',messages:[],answers:Object.create(null)};this.active.set(r.ticket,r);
-  const heading=`${this.title(r.threadId)}\nدرخواست بومی Codex\nشناسهٔ بررسی: ${r.fingerprint}`;
+  const heading=this.t`${this.title(r.threadId)}\nدرخواست بومی Codex\nشناسهٔ بررسی: ${r.fingerprint}`;
   try{
    if(['questions','form'].includes(r.kind)){
     if(r.kind==='form'){
@@ -16,19 +17,19 @@ export class TelegramNative {
     for(const [qi,q]of r.questions.entries()){
      if(this.active.get(r.ticket)!==r)return;
      const options=(q.options||[]).map((o,i)=>`${i+1}. ${o.label}${o.description?' — '+o.description:''}`).join('\n');
-     const text=`${heading}\n\n${q.header||''}\n${q.question}\n${q.description||''}\n${options}\n\n${q.options?.length&&!q.isOther?'یک گزینه را انتخاب کن.':'برای پاسخ متنی به همین پیام Reply کن.'}`;
+     const text=`${heading}\n\n${q.header||''}\n${q.question}\n${q.description||''}\n${options}\n\n${q.options?.length&&!q.isOther?this.t('یک گزینه را انتخاب کن.'):this.t('برای پاسخ متنی به همین پیام Reply کن.')}`;
      const keyboard=(q.options||[]).map((o,i)=>[{text:[...o.label].slice(0,55).join(''),callback_data:`n:${r.ticket}:q:${qi}:${i}`}]);
-     if(q.required===false)keyboard.push([{text:'خالی بگذار (اختیاری)',callback_data:`n:${r.ticket}:s:${qi}`}]);
-     let body=text;if([...text].length>3600){await this.api.document(this.chatId,text,'codex-question.txt');if(this.active.get(r.ticket)!==r)return;body=`${heading}\n\nسؤال ${qi+1}: متن کامل و گزینه‌ها در فایل بالا؛ با Reply یا دکمه پاسخ بده.`;}
+     if(q.required===false)keyboard.push([{text:this.t('خالی بگذار (اختیاری)'),callback_data:`n:${r.ticket}:s:${qi}`}]);
+     let body=text;if([...text].length>3600){await this.api.document(this.chatId,text,'codex-question.txt');if(this.active.get(r.ticket)!==r)return;body=this.t`${heading}\n\nسؤال ${qi+1}: متن کامل و گزینه‌ها در فایل بالا؛ با Reply یا دکمه پاسخ بده.`;}
      const result=await this.api.call('sendMessage',{chat_id:this.chatId,text:body,reply_markup:keyboard.length?{inline_keyboard:keyboard}:{force_reply:true,selective:true}});
      r.messages.push(result.message_id);this.prompts.set(result.message_id,{ticket:r.ticket,questionId:q.id});
      if(this.active.get(r.ticket)!==r){await this.clear(r);return;}
     }
-    if(r.actions.length&&this.active.get(r.ticket)===r){const result=await this.api.call('sendMessage',{chat_id:this.chatId,text:'تصمیم دربارهٔ فرم بالا:',reply_markup:{inline_keyboard:r.actions.map((a,i)=>[{text:a.label,callback_data:`n:${r.ticket}:a:${i}`}])}});r.messages.push(result.message_id);if(this.active.get(r.ticket)!==r){await this.clear(r);return;}}
+    if(r.actions.length&&this.active.get(r.ticket)===r){const result=await this.api.call('sendMessage',{chat_id:this.chatId,text:this.t('تصمیم دربارهٔ فرم بالا:'),reply_markup:{inline_keyboard:r.actions.map((a,i)=>[{text:this.t(a.label),callback_data:`n:${r.ticket}:a:${i}`}])}});r.messages.push(result.message_id);if(this.active.get(r.ticket)!==r){await this.clear(r);return;}}
    }else{
     const details=stringifyWire(r.details),text=`${heading}\n\n${details}`;let body=text;
-    if([...text].length>3600){await this.api.document(this.chatId,text,'codex-approval-details.txt');if(this.active.get(r.ticket)!==r)return;body=`${heading}\n\nجزئیات کامل درخواست در فایل بالا است. تصمیم فقط به همین درخواست مربوط است.`;}
-    const result=await this.api.call('sendMessage',{chat_id:this.chatId,text:body,reply_markup:{inline_keyboard:r.actions.map((a,i)=>[{text:a.label,callback_data:`n:${r.ticket}:a:${i}`}])}});r.messages.push(result.message_id);
+    if([...text].length>3600){await this.api.document(this.chatId,text,'codex-approval-details.txt');if(this.active.get(r.ticket)!==r)return;body=this.t`${heading}\n\nجزئیات کامل درخواست در فایل بالا است. تصمیم فقط به همین درخواست مربوط است.`;}
+    const result=await this.api.call('sendMessage',{chat_id:this.chatId,text:body,reply_markup:{inline_keyboard:r.actions.map((a,i)=>[{text:this.t(a.label),callback_data:`n:${r.ticket}:a:${i}`}])}});r.messages.push(result.message_id);
     if(this.active.get(r.ticket)!==r){await this.clear(r);return;}
    }
    r.state='pending';
