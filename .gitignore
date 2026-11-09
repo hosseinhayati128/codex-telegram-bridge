@@ -1,0 +1,13 @@
+private/
+output/
+receipts/
+node_modules/
+files/
+bridge-config.json
+launcher.ini
+supervisor.ini
+start-codex
+codex-telegram-cli
+*.dpapi
+*.exe
+*.env
