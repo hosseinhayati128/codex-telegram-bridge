@@ -35,7 +35,7 @@ export class ChatMenu {
  }
  async page(ticket,index){const s=this.data.menuSessions[ticket];if(!s||s.expiresAt<Date.now()||!Number.isSafeInteger(index)||index<0||index>s.pages.length)throw new Error('Stale chat page');
   if(index===s.pages.length){if(s.next===null)throw new Error('No older page');const partial=s.scanning?.index===index?s.scanning.rows:[];
-   const result=await this.c.desktop.listChatPage({projectId:s.project?.projectId??null,continuation:s.next,exclude:[...s.seenIds,...partial.map(c=>c.id)],take:5-partial.length});s.next=result.continuation;const combined=[...partial,...result.rows];
+   const result=await this.c.desktop.listChatPage({projectId:s.project?.projectId??null,continuation:s.next,exclude:[...s.seenIds,...partial.map(c=>c.id)],take:5-partial.length});s.next=result.continuation;s.sidebarLimited=result.sidebarLimited===true;const combined=[...partial,...result.rows];
    if(combined.length<5&&s.next!==null){s.scanning={index,rows:combined,scannedRows:(s.scanning?.scannedRows||0)+(result.scannedRows||0)};this.c.state.save();
     const keys=[[{text:'ادامهٔ یافتن پنج چت',callback_data:`m:l:${ticket}:${index}`}]];if(index>0)keys.push([{text:'بازگشت به صفحهٔ قبلی',callback_data:`m:l:${ticket}:${index-1}`}]);keys.push([{text:'🏠 پروژه‌ها',callback_data:'m:h:0'}]);
     await this.send(`${s.project?s.project.label:'چت‌های محلی'}\nجست‌وجوی این صفحه هنوز کامل نشده است.\n${s.scanning.scannedRows} ردیف محلی بررسی شد؛ ${combined.length} چت از این صفحه پیدا شد.\nبرای ادامه، دکمهٔ زیر را بزن.`,keys);return;
@@ -47,7 +47,7 @@ export class ChatMenu {
   keyboard.push(...visible.map(c=>[{text:[...c.title].slice(0,55).join(''),callback_data:`chat:${c.id}`} ]));
   const arrows=[];if(index>0)arrows.push({text:'پنج‌تای جدیدتر',callback_data:`m:l:${ticket}:${index-1}`});if(index<s.pages.length-1||s.next!==null)arrows.push({text:'پنج‌تای قدیمی‌تر',callback_data:`m:l:${ticket}:${index+1}`});if(arrows.length)keyboard.push(arrows);
   keyboard.push([{text:'🏠 پروژه‌ها',callback_data:'m:h:0'}]);this.c.state.save();
-  await this.send(`${s.project?s.project.label:'چت‌های اخیر — همهٔ پروژه‌های محلی'}\nصفحهٔ ${index+1}\n\n${visible.map(c=>`${c.id===this.c.selected().id?'● ':''}${c.alias}: ${c.title}`).join('\n')||'چتی در این صفحه نیست.'}`,keyboard);
+  await this.send(`${s.project?s.project.label:'چت‌های اخیر — همهٔ پروژه‌های محلی'}\nصفحهٔ ${index+1}${s.sidebarLimited?'\nنمایش چت‌های سنجاق‌شده و موارد محلی از ۵۰ ردیف اخیر برنامه.':''}\n\n${visible.map(c=>`${c.id===this.c.selected().id?'● ':''}${c.alias}: ${c.title}`).join('\n')||'چتی در این صفحه نیست.'}`,keyboard);
  }
  async askCreation(projectId){const project=await this.localProject(projectId);
   const draft={ticket:randomBytes(12).toString('base64url'),messageId:null,project:{...project},expiresAt:Date.now()+10*60000,state:'pending'};

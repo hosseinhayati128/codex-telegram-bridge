@@ -21,16 +21,18 @@ export class Desktop {
  async listProjects(){const client=await this.connect(),result=await client.call('list_projects',{},this.config.callerThreadId);if(!Array.isArray(result.projects))throw new Error('Invalid project list');
   return result.projects.filter(p=>p.projectKind==='local'&&p.hostId==='local'&&/^[0-9a-f-]{36}$/.test(p.projectId)&&typeof p.label==='string'&&typeof p.path==='string').map(p=>({projectId:p.projectId,projectKind:'local',hostId:'local',label:p.label,path:p.path}));
  }
- async listChatPage({projectId=null,continuation=null,exclude=[],take=5}={}){if(!Number.isSafeInteger(take)||take<1||take>5)throw new Error('Invalid page size');const client=await this.connect(),rows=[],seen=new Set(exclude),cursors=new Set(continuation?.cursors||[]),deadline=Date.now()+4000;let cursor=continuation?.cursor??null,buffer=[...(continuation?.buffer||[])],finished=continuation?.finished===true,batches=0,scannedRows=0;
+ async listChatPage({projectId=null,continuation=null,exclude=[],take=5}={}){if(!Number.isSafeInteger(take)||take<1||take>5)throw new Error('Invalid page size');const client=await this.connect(),sidebar=client.sidebarThreadList===true,rows=[],seen=new Set(exclude),cursors=new Set(continuation?.cursors||[]),deadline=Date.now()+4000;let cursor=continuation?.cursor??null,buffer=[...(continuation?.buffer||[])],finished=continuation?.finished===true,batches=0,scannedRows=0;
   while(rows.length<take){while(buffer.length&&rows.length<take){const c=buffer.shift();if(!seen.has(c.id)){seen.add(c.id);rows.push(c);}}if(rows.length===take||finished)break;
    // Keep sparse-project scans resumable so one click cannot block bot updates.
    if(batches>=2||(batches>0&&Date.now()>=deadline))break;
-   const page=await client.call('list_threads',{mode:'history',source:'codex',hostId:'local',archived:false,limit:projectId?50:5,...(cursor?{cursor}:{})},this.config.callerThreadId);if(!Array.isArray(page.threads))throw new Error('Invalid chat page');
-   batches++;scannedRows+=page.threads.length;
-   buffer=page.threads.filter(c=>c.kind==='codex'&&c.hostId==='local'&&/^[0-9a-f-]{36}$/.test(c.id)&&typeof c.title==='string'&&(!projectId||c.projectId===projectId)).map(c=>({id:c.id,title:c.title,projectId:c.projectId??null}));
-   cursor=page.nextCursor??null;finished=!cursor;if(cursor){if(typeof cursor!=='string'||cursors.has(cursor))throw new Error('Invalid chat-list cursor');cursors.add(cursor);}
+   const page=await client.call('list_threads',sidebar?{limit:50}:{mode:'history',source:'codex',hostId:'local',archived:false,limit:projectId?50:5,...(cursor?{cursor}:{})},this.config.callerThreadId);if(!Array.isArray(page.threads))throw new Error('Invalid chat page');
+   // shortcut: sidebar API exposes only pinned and 50 recent entries; use history pagination when available.
+   const threads=sidebar?[...(page.pinnedThreads||[]),...page.threads].sort((a,b)=>(b.updatedAt||0)-(a.updatedAt||0)):page.threads;
+   batches++;scannedRows+=threads.length;
+   buffer=threads.filter(c=>c.kind==='codex'&&c.hostId==='local'&&/^[0-9a-f-]{36}$/.test(c.id)&&typeof c.title==='string'&&(!projectId||c.projectId===projectId)).map(c=>({id:c.id,title:c.title,projectId:c.projectId??null}));
+   cursor=sidebar?null:page.nextCursor??null;finished=!cursor;if(cursor){if(typeof cursor!=='string'||cursors.has(cursor))throw new Error('Invalid chat-list cursor');cursors.add(cursor);}
   }
-  return{rows,continuation:buffer.length||!finished?{cursor,buffer,finished,cursors:[...cursors]}:null,scannedRows};
+  return{rows,continuation:buffer.length||!finished?{cursor,buffer,finished,cursors:[...cursors]}:null,scannedRows,sidebarLimited:sidebar};
  }
  async createChat(expected,prompt){const project=(await this.listProjects()).find(p=>p.projectId===expected.projectId&&p.path===expected.path);if(!project||typeof prompt!=='string'||!prompt.trim()||prompt.length>8000)throw new Error('Invalid or changed local project');const client=await this.connect();this.assertLiveEndpoint(client);return client.call('create_thread',{prompt,target:{type:'project',projectId:project.projectId,environment:{type:'local'}}},this.config.callerThreadId);}
  watchChat(chat){if(!/^[0-9a-f-]{36}$/.test(chat.id)||typeof chat.title!=='string'||typeof chat.alias!=='string')throw new Error('Invalid selected chat');if(!this.config.chats.some(c=>c.id===chat.id))this.config.chats.push({...chat});this.state.data.watchedChats=this.config.chats.map(c=>({...c}));this.state.save();this.onWatch?.(this.config.chats.map(c=>c.id));}
