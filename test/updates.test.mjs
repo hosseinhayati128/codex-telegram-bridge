@@ -17,7 +17,7 @@ test('updates menu freezes the original chat; foreign owner and stale callbacks 
 
 test('slash commands in replies remain owned by native requests',async()=>{const f=fixture();f.c.native.prepare=()=>({kind:'partial'});await f.c.update(input(1,'/updates progress',{reply_to_message:{message_id:12}}));assert.equal(f.state.get(1).payload.kind,'partial');assert.equal(f.state.data.updatesByThread?.[A],undefined);});
 
-test('enable baselines history, strict public phases batch in order and quiet chats emit no progress',async()=>{const f=fixture();f.setTurns([turn('old',[msg('old-message','past')])]);await f.d.configureUpdates(A,'progress');f.setTurns([turn('new',[{id:'secret',type:'reasoning',text:'PRIVATE'},{id:'cmd',type:'commandExecution',text:'INTERNAL CODE'},msg('unknown','UNKNOWN',null),msg('final','not done','final_answer'),msg('one','first visible'),msg('two','second visible','partial_answer'),{id:'tool',type:'mcpToolCall',text:'TOOL OUTPUT'}]),turn('old',[msg('old-message','past')])]);await f.d.poll();await f.d.poll();assert.equal(f.sent.length,1);assert.ok(f.sent[0].text.indexOf('first visible')<f.sent[0].text.indexOf('second visible'));for(const secret of ['PRIVATE','INTERNAL CODE','UNKNOWN','TOOL OUTPUT','not done','past'])assert.ok(!f.sent[0].text.includes(secret));assert.equal(f.sent[0].kind,'progress');assert.equal(f.sent[0].threadId,A);});
+test('enable baselines history and batches only completed public progress in order',async()=>{const f=fixture();f.setTurns([turn('old',[msg('old-message','past')])]);await f.d.configureUpdates(A,'progress');f.setTurns([turn('new',[{id:'secret',type:'reasoning',text:'PRIVATE'},{id:'cmd',type:'commandExecution',text:'INTERNAL CODE'},msg('unknown','UNKNOWN',null),msg('one','first visible'),msg('two','second visible','partial_answer'),{id:'tool',type:'mcpToolCall',text:'TOOL OUTPUT'},msg('final','not done','final_answer')]),turn('old',[msg('old-message','past')])]);await f.d.poll();await f.d.poll();assert.equal(f.sent.length,1);assert.ok(f.sent[0].text.indexOf('first visible')<f.sent[0].text.indexOf('second visible'));for(const secret of ['PRIVATE','INTERNAL CODE','UNKNOWN','TOOL OUTPUT','not done','past'])assert.ok(!f.sent[0].text.includes(secret));assert.equal(f.sent[0].kind,'progress');assert.equal(f.sent[0].threadId,A);});
 
 test('unfinished last commentary waits for its following item; streamed prefixes are not repeated',async()=>{const f=fixture();await f.d.configureUpdates(A,'progress');f.setTurns([turn('new',[msg('one','part')])]);await f.d.poll();assert.equal(f.sent.length,0);f.setTurns([turn('new',[msg('one','complete public message'),{type:'commandExecution',id:'cmd'}])]);await f.d.poll();await f.d.poll();assert.equal(f.sent.length,1);assert.match(f.sent[0].text,/complete public message/);});
 
@@ -34,3 +34,52 @@ test('enabling while an older poll is in flight cannot replay progress from that
 test('crash at outbox persistence atomically retains captured IDs even when the next snapshot adds a message',async()=>{const f=fixture();await f.d.configureUpdates(A,'progress');let crash;const save=f.state.save.bind(f.state);f.state.save=()=>{save();if(!crash&&Object.values(f.state.data.notifications).some(n=>n.kind==='progress'))crash=fs.readFileSync(f.state.file);};f.setTurns([turn('new',[msg('one','FIRST'),msg('two','SECOND'),{type:'commandExecution'}])]);await f.d.poll();assert.ok(crash);f.sent.length=0;fs.writeFileSync(f.state.file,crash);const recovered=new State(f.state.file),d=new Desktop(f.config,recovered,f.notify);d.read=f.d.read;f.setTurns([turn('new',[msg('one','FIRST'),msg('two','SECOND'),msg('three','THIRD'),{type:'commandExecution'}])]);await d.poll();assert.equal(f.sent.length,2);assert.equal(f.sent.filter(s=>s.text.includes('FIRST')).length,1);assert.equal(f.sent.filter(s=>s.text.includes('SECOND')).length,1);assert.match(f.sent[1].text,/THIRD/);});
 
 test('several terminal turns retain progress then final chronology across reconnect',async()=>{const f=fixture();f.state.data.seen[A]='before';await f.d.configureUpdates(A,'progress');f.setTurns([turn('two',[msg('p2','p2'),msg('f2','f2','final_answer')],'completed'),turn('one',[msg('p1','p1'),msg('f1','f1','final_answer')],'completed')]);await f.d.poll();assert.deepEqual(f.sent.map(s=>s.text.split('\n').at(-1)),['p1','f1','p2','f2']);});
+
+test('a published reply in an open turn is delivered once in order',async()=>{
+ const f=fixture(),reasoning={id:'private',type:'reasoning',text:'private reasoning'};
+ const history=[msg('prior','old reply','final_answer'),reasoning];
+ f.setTurns([turn('open',history)]);
+ await f.d.configureUpdates(A,'progress');
+ await f.d.poll();
+ const before=msg('before','first progress');
+ f.setTurns([turn('open',[...history,before,msg('live','draft','final_answer')])]);
+ await f.d.poll();
+ assert.deepEqual(f.sent.map(s=>s.text.split('\n').at(-1)),['first progress']);
+ const items=[...history,before,msg('live','new reply','final_answer'),msg('after','later progress'),reasoning];
+ f.setTurns([turn('open',items)]);
+ await f.d.poll();
+ assert.deepEqual(f.sent.map(s=>s.text.split('\n').at(-1)),['first progress','new reply','later progress']);
+ assert.equal(await f.d.lastAnswer(A),'new reply');
+ const restarted=new Desktop(f.config,new State(f.state.file),f.notify);
+ restarted.read=f.d.read;
+ f.setTurns([turn('open',items,'completed')]);
+ await restarted.poll();
+ assert.equal(f.sent.length,3);
+});
+
+test('quiet mode keeps an open-turn reply queued across restart',async()=>{
+ const f=fixture(),reasoning={id:'private',type:'reasoning'};
+ f.setTurns([turn('open',[])]);
+ await f.d.configureUpdates(A,'progress');
+ await f.d.poll();
+ f.setOffline(true);
+ f.setTurns([turn('open',[msg('p','progress'),msg('f','published reply','final_answer'),reasoning])]);
+ await f.d.poll();
+ await f.d.configureUpdates(A,'quiet');
+ const restarted=new Desktop(f.config,new State(f.state.file),f.notify);
+ restarted.read=f.d.read;
+ f.setOffline(false);
+ await restarted.poll();
+ await restarted.poll();
+ assert.deepEqual(f.sent.map(s=>s.text.split('\n').at(-1)),['published reply']);
+});
+
+test('the first dispatch baselines old replies before a new answer can appear',async()=>{
+ const f=fixture(),reasoning={id:'private',type:'reasoning'};
+ const history=[msg('old','old reply','final_answer'),reasoning];
+ f.setTurns([turn('open',history)]);
+ f.d.connect=async()=>({call:async()=>f.setTurns([turn('open',[...history,msg('new','first reply','final_answer'),reasoning])])});
+ await Desktop.prototype.sendText.call(f.d,A,'hello');
+ await f.d.poll();
+ assert.deepEqual(f.sent.map(s=>s.text.split('\n').at(-1)),['first reply']);
+});

@@ -125,6 +125,7 @@ const english={
   "چت جدید هنوز در حال آماده‌سازی است. از منو چت آماده‌شده را انتخاب کن؛ یا برای برگشت به پیام عادی /cancel را بفرست.": "The new chat is still being prepared. Select it from the project menu when ready, or send /cancel to return to normal messages.",
   "برای ساخت چت جدید، به پیام درخواستِ پیام اول Reply کن. برای برگشت به ارسال پیام عادی /cancel را بفرست.": "To create a chat, reply to the first-prompt request. Send /cancel to return to normal messages.",
   "{0}\nپیشرفت Codex": "{0}\nCodex progress",
+  "{0}\nپاسخ Codex": "{0}\nCodex reply",
   "هنوز پاسخ نهایی کامل‌شده‌ای پیدا نشد.": "No completed final reply found yet.",
   "{0}\nوضعیت: {1}": "{0}\nStatus: {1}",
   "نوبت پایان یافت؛ نتیجه را در چت بررسی کن.": "The turn ended; check the chat for the result.",
