@@ -1,5 +1,6 @@
 import {translator} from './i18n.mjs';
-import {isOwner,sendText} from './telegram.mjs';
+import {isOwner,sendCodexText,sendText} from './telegram.mjs';
+import {formatCodexText} from './telegram-format.mjs';
 import {ChatMenu} from './chat-menu.mjs';
 import {BotUi,menuButton} from './bot-ui.mjs';
 import {incomingAttachment,MAX_IN} from './attachments.mjs';import {randomBytes} from 'node:crypto';
@@ -59,7 +60,7 @@ export class Controller {
   }catch{this.state.begin(id,{kind:'rejected-input'});this.state.finish(id,'rejected');await this.text(this.t('این پیام یا دکمه قابل اجرا نیست؛ سؤال ممکن است بسته شده باشد. /status و /help را بررسی کن.'));return;}
   if(!this.state.begin(id,operation))return;
   if(u.callback_query)try{await this.api.call('answerCallbackQuery',{callback_query_id:u.callback_query.id,text:this.t('دریافت شد')});}catch{}
-  let notice='';
+  let notice='',heading='';
   try{
    if(operation.kind==='command'){
     this.state.dispatching(id);await this.desktop.sendText(operation.threadId,operation.text,{thinking:operation.thinking});this.state.finish(id,'submitted');notice=this.t`دستور به «${this.chats.find(c=>c.id===operation.threadId).title}» فرستاده شد.`;
@@ -90,7 +91,12 @@ export class Controller {
      case 'set-effort':if(operation.value==='default')delete this.state.data.effortByThread[operation.threadId];else this.state.data.effortByThread[operation.threadId]=operation.value;notice=this.t`effort تلگرام برای «${this.chats.find(c=>c.id===operation.threadId)?.title}»: ${this.thinking(operation.threadId)||this.t('پیروی از Codex')}. از پیام بعدی همان چت اعمال می‌شود.`;break;
      case 'file-notice':notice=operation.message;break;
      case 'files-menu':{if(!this.attachments)throw new Error('Files unavailable');const r=await this.desktop.read(operation.threadId),text=await this.desktop.lastAnswer(operation.threadId),title=this.chats.find(c=>c.id===operation.threadId)?.title;this.attachments.buttons(operation.threadId,text,r.thread.cwd);const keys=this.attachments.list(operation.threadId);if(keys.length)await this.api.call('sendMessage',{chat_id:String(this.owner.chatId),text:this.t`📎 فایل‌های خروجی «${title}»\n\nبرای دریافت، نام فایل را بزن.`,reply_markup:{inline_keyboard:[...keys,[menuButton(this.t)]]}});else notice=this.t`فایل خروجی قابل دریافت برای «${title}» پیدا نشد. برای یک فایل از چت انتخاب‌شده می‌توانی /get و مسیر کامل را بفرستی.`;break;}
-     case 'last':notice=`${this.chats.find(c=>c.id===operation.threadId)?.title}\n\n${await this.desktop.lastAnswer(operation.threadId)}`;break;
+     case 'last':{
+      const answer=await this.desktop.lastAnswer(operation.threadId);
+      heading=this.chats.find(c=>c.id===operation.threadId)?.title??'';
+      notice=heading+'\n\n'+answer;
+      break;
+     }
      case 'status':notice=this.t`${this.status()}\nچت انتخابی: ${this.selected().title}\neffort تلگرام: ${this.thinking(this.selected().id)||this.t('پیروی از Codex')}\nاعلان‌ها: ${this.updatesLabel(this.selected().id)}\nفایل‌های در صف: ${this.filePending}\nکنترل: ${this.state.data.paused?this.t('متوقف'):this.t('فعال')}\nعملیات با تحویل نامشخص: ${Object.values(this.state.data.journal).filter(x=>x.state==='uncertain').length}`;break;
      case 'pause':case 'stop':this.state.data.paused=true;notice=this.t('ارسال دستور و پاسخ از تلگرام متوقف شد؛ اعلان‌ها ادامه دارند. برای فعال‌کردن /resume را بفرست.');break;
      case 'resume':this.state.data.paused=false;notice=this.t('کنترل از تلگرام فعال شد.');break;
@@ -104,6 +110,10 @@ export class Controller {
    const uncertain=this.state.get(id)?.state==='dispatching';if(operation.kind==='create-chat'&&uncertain&&this.state.data.pendingCreation)this.state.data.pendingCreation.state='uncertain';this.state.finish(id,uncertain?'uncertain':'failed');
    notice=uncertain?this.t('تحویل دستور یا پاسخ قطعی نیست؛ پیش از ارسال دوباره، خود چت را بررسی کن. هیچ اجرای خودکاری تکرار نمی‌شود.'):this.t('کدکس فعلاً در دسترس نیست یا درخواست بسته شده است. /status را بررسی کن.');
   }
-  if(notice)await this.text(notice,['select','status','last','pause','resume','stop','requests','set-effort','set-updates','files-menu'].includes(operation.kind)?{reply_markup:{inline_keyboard:[[menuButton(this.t)]]}}:{});
+  if(notice){
+   const extra=['select','status','last','pause','resume','stop','requests','set-effort','set-updates','files-menu'].includes(operation.kind)?{reply_markup:{inline_keyboard:[[menuButton(this.t)]]}}:{};
+   if(heading)await sendCodexText(this.api,String(this.owner.chatId),formatCodexText(notice,heading),extra);
+   else await this.text(notice,extra);
+  }
  }
 }

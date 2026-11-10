@@ -3,7 +3,8 @@ import fs from 'node:fs';import path from 'node:path';import {createHash} from '
 import {markdownImageParts,toolImagePart} from './images.mjs';
 const publicProgress=i=>i.type==='agentMessage'&&['commentary','partial_answer'].includes(i.phase)&&typeof i.id==='string'&&typeof i.text==='string';
 const progressSnapshot=(root,threadId,turns)=>Object.fromEntries(turns.map(t=>[t.id,t.items.filter(i=>publicProgress(i)||toolImagePart(root,threadId,t.id,i)).map(i=>i.id)]));
-const terminalTurn=t=>['completed','failed','interrupted'].includes(t.status);
+const terminalLabels={completed:'انجام شد',failed:'ناموفق',interrupted:'متوقف شد'};
+const terminalTurn=t=>Object.hasOwn(terminalLabels,t.status);
 const finalMessage=i=>i.type==='agentMessage'&&i.phase==='final_answer'&&typeof i.text==='string'&&i.text.trim();
 const replyId=(turn,item)=>`${turn.id}:${item.id}`;
 const publishedReply=i=>finalMessage(i)&&typeof i.id==='string'&&i.id;
@@ -22,7 +23,7 @@ export class Desktop {
    const last=parts.at(-1);
    if(!last.image&&!part.image)last.text+=part.text;else parts.push(part);
   }
-  this.outbox.add(key,parts[0].text,parts.length>1?{...meta,parts}:meta);
+  this.outbox.add(key,parts[0].text,{...meta,heading,...(parts.length>1?{parts}:{})});
  }
  baselineReplies(threadId,turns){
   // Baseline IDs are false; IDs durably queued for delivery are true.
@@ -160,7 +161,7 @@ export class Desktop {
     const queued=final&&this.state.data.replyCursors[c.id]?.[replyId(t,final)]===true;
     const entries=items.map(i=>i===final?(queued?null:i.text):toolImagePart(this.config.stateRoot,c.id,t.id,i)).filter(Boolean);
     if(!final)entries.push(this.t('نوبت پایان یافت؛ نتیجه را در چت بررسی کن.'));
-    if(entries.length||t.status!=='completed')this.queueReply(`${c.id}:${t.id}`,this.t`${c.title}\nوضعیت: ${t.status}`,entries,{threadId:c.id,cwd:r.thread?.cwd,turnId:t.id});
+    if(entries.length||t.status!=='completed')this.queueReply(`${c.id}:${t.id}`,this.t`${c.title}\nوضعیت: ${this.t(terminalLabels[t.status])}`,entries,{threadId:c.id,cwd:r.thread?.cwd,turnId:t.id});
    }captured.push(t.id);
   }}
   if(progress&&progressCursor)this.state.data.progressCursors[c.id]=Object.fromEntries(r.turns.map(t=>[t.id,progressCursor[t.id]||[]]));

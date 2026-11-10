@@ -15,7 +15,7 @@ export class Outbox {
      if(!item.parts)await this.send(item.text,item);
      else for(let index=item.nextPart??0;index<item.parts.length&&Object.hasOwn(this.state.data.notifications,key);index++){
       const part=item.parts[index];
-      await this.send(part.text?.trim()??'',{...item,image:part.image});
+      await this.send(part.text?.trim()??'',{...item,image:part.image,heading:index===0?item.heading:undefined});
       item.nextPart=index+1;
       this.state.save();
      }

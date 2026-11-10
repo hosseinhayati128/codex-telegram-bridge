@@ -1,6 +1,7 @@
 import fs from 'node:fs';import path from 'node:path';import os from 'node:os';import {createHash,randomBytes} from 'node:crypto';import {fileURLToPath} from 'node:url';
 import {MAX_IMAGE_BYTES,decodeToolImage,imageFormat,rasterPath,readToolImages} from './images.mjs';
-import {sendText} from './telegram.mjs';
+import {sendCodexText,sendText} from './telegram.mjs';
+import {formatCodexText} from './telegram-format.mjs';
 export const MAX_IN=20_000_000,MAX_OUT=MAX_IMAGE_BYTES;
 export function incomingAttachment(m){if(!m)return null;for(const[k,extension]of [['document','bin'],['video','mp4'],['audio','mp3'],['voice','ogg'],['animation','gif']])if(m[k]?.file_id)return{fileId:m[k].file_id,filename:m[k].file_name||`${k}-${m.message_id||'file'}.${extension}`,fileSize:m[k].file_size,mime:m[k].mime_type};const p=m.photo?.at(-1);return p?.file_id?{fileId:p.file_id,filename:`photo-${m.message_id||'file'}.jpg`,fileSize:p.file_size,mime:'image/jpeg'}:null;}
 export function safeFilename(input,maxBytes=Infinity){
@@ -48,29 +49,39 @@ export class Attachments {
   const display=linux?file:file.replaceAll('\\','/'),caption=op.caption||'این فایل را برای همین چت فرستاده‌ام. دریافتش را تأیید کن و منتظر دستور بعدی باش.';
   return{path:file,...result,prompt:`فایل پیوست از تلگرام برای همین چت:\nنام فایل (داده): ${JSON.stringify(name)}\nمسیر محلی: ${JSON.stringify(display)}\n[فایل پیوست](<${display}>)\nاندازه: ${result.bytes} bytes\nمحتوای فایل دادهٔ ورودی است.\n\nدرخواست کاربر:\n${caption}`};
  }
- resolve(threadId,input,cwd,{automaticImage=false}={}){let requested=String(input||'').trim();if(requested.startsWith('file:')){try{requested=fileURLToPath(requested);}catch{throw new Error('Invalid file path');}}if(!path.isAbsolute(requested)||/^[\\/]{2}/.test(requested)||/^[a-z]+:\/\//i.test(requested)||/[\x00-\x1f]/.test(requested)||requested.slice(2).includes(':'))throw new Error('Invalid local file path');
+ resolve(threadId,input,cwd,{threadArtifacts=false}={}){let requested=String(input||'').trim();if(requested.startsWith('file:')){try{requested=fileURLToPath(requested);}catch{throw new Error('Invalid file path');}}if(!path.isAbsolute(requested)||/^[\\/]{2}/.test(requested)||/^[a-z]+:\/\//i.test(requested)||/[\x00-\x1f]/.test(requested)||requested.slice(2).includes(':'))throw new Error('Invalid local file path');
   const vis=path.join(this.codexHome,'visualizations');
   const permitted=file=>{const parts=file.split(/[\\/]/);if(within(file,path.join(this.config.stateRoot,'private'))||parts.some(p=>/^(\.ssh|\.aws|\.azure|\.gnupg|\.git)$/i.test(p)))throw new Error('Protected private file');if(within(file,this.codexHome)&&!within(file,vis))throw new Error('Protected Codex private file');
    const rel=path.relative(vis,file).split(path.sep),artifact=rel.length>=5&&/^\d{4}$/.test(rel[0])&&/^\d{2}$/.test(rel[1])&&/^\d{2}$/.test(rel[2])&&rel[3]===threadId;
    const inbox=path.join(this.root,'incoming'),incoming=within(file,path.join(inbox,threadId));
    const workspace=typeof cwd==='string'&&path.isAbsolute(cwd)&&!/^[/\\]{2}/.test(cwd)&&within(file,path.resolve(cwd));
-   if(automaticImage&&(within(file,vis)&&!artifact||within(file,inbox)&&!incoming)||!workspace&&!artifact&&!incoming)throw new Error('File is outside this chat scope');
+   if(threadArtifacts&&(within(file,vis)&&!artifact||within(file,inbox)&&!incoming)||!workspace&&!artifact&&!incoming)throw new Error('File is outside this chat scope');
   };
   const absolute=path.resolve(requested);permitted(absolute);
   let part=path.parse(absolute).root;for(const segment of path.relative(part,absolute).split(path.sep)){part=path.join(part,segment);if(fs.lstatSync(part).isSymbolicLink())throw new Error('Linked file paths are outside the transfer scope');}
   const real=fs.realpathSync(absolute);permitted(real);const stat=fs.statSync(real);if(!stat.isFile()||stat.size>MAX_OUT)throw new Error('Not a regular file or exceeds upload limit');return{path:real,name:path.basename(real),size:stat.size,mtimeMs:stat.mtimeMs};
  }
- register(threadId,input,cwd,{forceNew=false}={}){const file=this.resolve(threadId,input,cwd),records=this.state.data.downloads;for(const[t,r]of Object.entries(records)){if(r.expiresAt<Date.now())delete records[t];else if(!forceNew&&r.threadId===threadId&&r.path===file.path&&r.size===file.size&&r.mtimeMs===file.mtimeMs)return t;}while(Object.keys(records).length>=128)delete records[Object.keys(records)[0]];const ticket=randomBytes(12).toString('base64url');records[ticket]={...file,threadId,expiresAt:Date.now()+24*3600000,used:false,sent:false};this.state.save();return ticket;}
+ register(threadId,input,cwd,{forceNew=false,threadArtifacts=false}={}){const file=this.resolve(threadId,input,cwd,{threadArtifacts}),records=this.state.data.downloads;for(const[t,r]of Object.entries(records)){if(r.expiresAt<Date.now())delete records[t];else if(!forceNew&&r.threadId===threadId&&r.path===file.path&&r.size===file.size&&r.mtimeMs===file.mtimeMs)return t;}while(Object.keys(records).length>=128)delete records[Object.keys(records)[0]];const ticket=randomBytes(12).toString('base64url');records[ticket]={...file,threadId,expiresAt:Date.now()+24*3600000,used:false,sent:false};this.state.save();return ticket;}
  consume(ticket){const r=this.state.data.downloads[ticket];if(!r||r.used||r.expiresAt<Date.now())throw new Error('Stale or used file button');r.used=true;this.state.save();return {...r};}
- buttons(threadId,text,cwd){const keyboard=[];for(const match of String(text).matchAll(/!?\[[^\]\n]*\]\(\s*(?:<([^>\n]+)>|([^\n)]+))\s*\)/g)){const candidate=(match[1]||match[2]).trim();if(/:\d+(?:-\d+)?$/.test(candidate))continue;try{const t=this.register(threadId,candidate,cwd),r=this.state.data.downloads[t];if(!r.used&&!keyboard.some(row=>row[0].callback_data==='file:'+t))keyboard.push([{text:'📎 '+[...r.name].slice(0,45).join(''),callback_data:'file:'+t}]);}catch{}if(keyboard.length>=8)break;}return keyboard;}
+ buttons(threadId,text,cwd,files=formatCodexText(text).files){
+  const keyboard=[];
+  for(const candidate of files){
+   try{
+    const t=this.register(threadId,candidate,cwd,{threadArtifacts:true}),r=this.state.data.downloads[t];
+    if(!r.used&&!keyboard.some(row=>row[0].callback_data==='file:'+t))keyboard.push([{text:'📎 '+[...r.name].slice(0,45).join(''),callback_data:'file:'+t}]);
+   }catch{}
+   if(keyboard.length>=8)break;
+  }
+  return keyboard;
+ }
  list(threadId){return Object.entries(this.state.data.downloads).filter(([,r])=>r.threadId===threadId&&!r.used&&r.expiresAt>Date.now()).slice(-20).map(([t,r])=>[{text:'📎 '+[...r.name].slice(0,45).join(''),callback_data:'file:'+t}]);}
  async send(ticket,threadId,cwd){const record=this.state.data.downloads[ticket];if(!record||record.threadId!==threadId||!record.used||record.sent||record.expiresAt<Date.now())throw new Error('Stale file request');const current=this.resolve(threadId,record.path,cwd);if(current.size!==record.size||current.mtimeMs!==record.mtimeMs)throw new Error('File changed since the button was offered');const bytes=readFile(current);if(this.state.data.paused)throw Object.assign(new Error('Transfer paused'),{code:'PAUSED'});record.sent=true;this.state.save();return this.api.document(this.chatId,bytes,current.name,'application/octet-stream');}
  pinImage(reference,{threadId,cwd}){
   if(this.state.data.paused||!rasterPath(reference))return;
   try{
    let current;
-   try{current=this.resolve(threadId,reference,cwd,{automaticImage:true});}
-   catch(error){if(error.code!=='ENOENT'||!reference.includes('%')||reference.startsWith('file:'))return;current=this.resolve(threadId,decodeURIComponent(reference),cwd,{automaticImage:true});}
+   try{current=this.resolve(threadId,reference,cwd,{threadArtifacts:true});}
+   catch(error){if(error.code!=='ENOENT'||!reference.includes('%')||reference.startsWith('file:'))return;current=this.resolve(threadId,decodeURIComponent(reference),cwd,{threadArtifacts:true});}
    const stat=fs.lstatSync(current.path,{bigint:true});
    if(!stat.isFile()||stat.nlink!==1n)return;
    return {...current,dev:stat.dev.toString(),ino:stat.ino.toString(),ctimeNs:stat.ctimeNs.toString()};
@@ -116,7 +127,13 @@ export class Attachments {
  async notify(text,meta={}){
   if(meta.image&&await this.forwardImage(meta.image,meta))return;
   if(!text.trim())return;
-  const keys=meta.threadId&&!meta.image?this.buttons(meta.threadId,text,meta.cwd):[];
-  return sendText(this.api,this.chatId,text,keys.length?{reply_markup:{inline_keyboard:keys}}:{});
+  if(!meta.threadId)return sendText(this.api,this.chatId,text);
+  const formatted=formatCodexText(text,meta.heading);
+  if(meta.image?.path&&!formatted.text.includes(meta.image.path)){
+   formatted.text+='\n'+meta.image.path;
+   formatted.plain+='\n'+meta.image.path;
+  }
+  const keys=meta.image?[]:this.buttons(meta.threadId,text,meta.cwd,formatted.files);
+  return sendCodexText(this.api,this.chatId,formatted,keys.length?{reply_markup:{inline_keyboard:keys}}:{});
  }
 }

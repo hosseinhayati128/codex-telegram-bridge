@@ -16,3 +16,11 @@ export class TelegramApi {
 }
 export function isOwner(update,owner,{allowForwardedMedia=false}={}){const cb=update.callback_query,m=cb?.message||update.message,from=cb?.from||m?.from;return !!m&&m.chat?.type==='private'&&String(from?.id)===String(owner.userId)&&String(m.chat.id)===String(owner.chatId)&&!from.is_bot&&(allowForwardedMedia||(!m.forward_origin&&!m.forward_from))&&!m.via_bot&&!m.is_automatic_forward;}
 export async function sendText(api,chatId,text,extra={}){const chars=[...String(text)];if(chars.length<=3800)return api.call('sendMessage',{chat_id:chatId,text:String(text),...extra});await api.document(chatId,String(text),'codex-message.txt');return api.call('sendMessage',{chat_id:chatId,text:'متن کامل در فایل بالا آمده است.',...extra});}
+export async function sendCodexText(api,chatId,{text,plain,entities},extra={}){
+ if(!text.trim())return;
+ const options={...extra,link_preview_options:{is_disabled:true}};
+ if(text.length>3800)return sendText(api,chatId,plain,options);
+ if(!entities.length)return sendText(api,chatId,text,options);
+ try{return await api.call('sendMessage',{chat_id:chatId,text,entities,...options});}
+ catch(error){if(error.telegramCode!==400)throw error;return sendText(api,chatId,plain,options);}
+}
