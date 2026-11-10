@@ -27,7 +27,15 @@ class PipeBroker {
    ThreadPool.QueueUserWorkItem(_=>{var id=Guid.NewGuid().ToString("N");StreamWriter writer=null;
     try{writer=new StreamWriter(pipe,new UTF8Encoding(false),65536,true);writer.NewLine="\n";clients[id]=writer;Emit("+"+id);
      using(var reader=new StreamReader(pipe,new UTF8Encoding(false,true),false,65536,true)){string line;while((line=reader.ReadLine())!=null){if(line.Length>16*1024*1024)break;Emit(id+"\t"+Convert.ToBase64String(Encoding.UTF8.GetBytes(line)));}}
-    }catch{}finally{StreamWriter removed;clients.TryRemove(id,out removed);Emit("-"+id);if(writer!=null)writer.Dispose();pipe.Dispose();}
+    }catch{}finally{
+     StreamWriter removed;clients.TryRemove(id,out removed);
+     // A rejected client may already have closed the pipe through the control stream.
+     try{if(writer!=null)writer.Dispose();}
+     catch(ObjectDisposedException){}
+     catch(IOException){}
+     finally{pipe.Dispose();}
+     Emit("-"+id);
+    }
    });
   }
  }
