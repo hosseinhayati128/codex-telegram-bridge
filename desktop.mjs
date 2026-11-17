@@ -1,6 +1,7 @@
 import {translator} from './i18n.mjs';
 import fs from 'node:fs';import path from 'node:path';import {createHash} from 'node:crypto';import {McpClient} from './mcp-client.mjs';import {atomicWrite} from './state.mjs';import {Outbox} from './delivery.mjs';
 import {markdownImageParts,toolImagePart} from './images.mjs';
+const RECENT_TURNS=4;
 const publicProgress=i=>i.type==='agentMessage'&&['commentary','partial_answer'].includes(i.phase)&&typeof i.id==='string'&&typeof i.text==='string';
 const progressSnapshot=(root,threadId,turns)=>Object.fromEntries(turns.map(t=>[t.id,t.items.filter(i=>publicProgress(i)||toolImagePart(root,threadId,t.id,i)).map(i=>i.id)]));
 const terminalLabels={completed:'انجام شد',failed:'ناموفق',interrupted:'متوقف شد'};
@@ -11,7 +12,7 @@ const publishedReply=i=>finalMessage(i)&&typeof i.id==='string'&&i.id;
 export class Desktop {
  constructor(config,state,notify,pinImage){Object.assign(this,{config,state,notify,pinImage});this.t=translator(()=>state.data.botLanguage);this.client=null;this.pipe=null;this.connected=false;this.opening=null;this.file=path.join(config.stateRoot,'private/desktop-connection.json');this.outbox=new Outbox(state,notify);state.data.capturedFinals??={};state.data.updatesByThread??={};state.data.progressCursors??={};state.data.replyCursors??={};for(const c of state.data.watchedChats||[])if(/^[0-9a-f-]{36}$/.test(c.id)&&typeof c.title==='string'&&typeof c.alias==='string'&&!config.chats.some(x=>x.id===c.id))config.chats.push({...c});}
  async configureUpdates(threadId,value){if(!this.config.chats.some(c=>c.id===threadId)||!['quiet','progress'].includes(value))throw new Error('Invalid updates preference');
-  if(value==='progress'&&this.state.data.updatesByThread[threadId]!=='progress'){const r=await this.read(threadId,4);this.state.data.progressCursors[threadId]=progressSnapshot(this.config.stateRoot,threadId,r.turns);}
+  if(value==='progress'&&this.state.data.updatesByThread[threadId]!=='progress'){const r=await this.read(threadId,RECENT_TURNS);this.state.data.progressCursors[threadId]=progressSnapshot(this.config.stateRoot,threadId,r.turns);}
   this.state.data.updatesByThread[threadId]=value;
   if(value==='quiet')for(const[key,item]of Object.entries(this.state.data.notifications))if(item.kind==='progress'&&item.threadId===threadId)delete this.state.data.notifications[key];
   this.state.save();
@@ -123,10 +124,27 @@ export class Desktop {
  assertLiveEndpoint(client){
   if(this.config.requireLiveEndpoint&&(client!==this.client||!this.pipe||!this.config.endpointValidator(this.pipe)))throw new Error('Codex endpoint changed');
  }
- async read(id,turnLimit=1){if(!this.config.chats.some(c=>c.id===id))throw new Error('Unauthorized chat');const c=await this.connect();const r=await c.call('read_thread',{threadId:id,hostId:'local',turnLimit,includeOutputs:false,maxOutputCharsPerItem:20000},this.config.callerThreadId);this.assertLiveEndpoint(c);if(r.thread?.id!==id)throw new Error('Mismatched chat');this.connected=true;return r;}
+ async read(id,turnLimit=1){
+  if(!this.config.chats.some(c=>c.id===id))throw new Error('Unauthorized chat');
+  const client=await this.connect();
+  for(let limit=turnLimit;;limit--){
+   let result;
+   try{
+    result=await client.call('read_thread',{threadId:id,hostId:'local',turnLimit:limit,includeOutputs:false,maxOutputCharsPerItem:20000},this.config.callerThreadId);
+   }catch(error){
+    if(!(limit>1&&error.code==='CODEX_READ_TOO_LARGE'))throw error;
+    this.assertLiveEndpoint(client);
+    continue;
+   }
+   this.assertLiveEndpoint(client);
+   if(result.thread?.id!==id)throw new Error('Mismatched chat');
+   this.connected=true;
+   return limit===turnLimit?result:{...result,reducedTurnWindow:true};
+  }
+ }
  async sendText(id,text,{thinking}={}){
   if(thinking!==undefined&&!['low','medium','high','xhigh','max','ultra'].includes(thinking))throw new Error('Invalid effort');
-  const primeReplies=!this.state.data.replyCursors[id],r=await this.read(id,primeReplies?4:1);
+  const primeReplies=!this.state.data.replyCursors[id],r=await this.read(id,primeReplies?RECENT_TURNS:1);
   if(r.thread.status?.activeFlags?.length)throw new Error('Answer native pending request first');
   const c=await this.connect();
   if(this.state.data.paused)throw Object.assign(new Error('Remote control paused'),{code:'PAUSED'});
@@ -148,7 +166,7 @@ export class Desktop {
  }
  async poll(){try{for(const c of this.config.chats){
   const progressCursor=this.state.data.progressCursors[c.id],priorReplies=this.state.data.replyCursors[c.id];
-  const r=await this.read(c.id,4),latest=r.turns?.[0];if(!latest)continue;
+  const r=await this.read(c.id,RECENT_TURNS),latest=r.turns?.[0];if(!latest)continue;
   const old=this.state.data.seen[c.id],captured=this.state.data.capturedFinals[c.id]??=[];
   const progress=this.state.data.updatesByThread[c.id]==='progress'&&progressCursor===this.state.data.progressCursors[c.id];
   if(progress&&!progressCursor)this.state.data.progressCursors[c.id]=progressSnapshot(this.config.stateRoot,c.id,r.turns);
@@ -164,8 +182,20 @@ export class Desktop {
     if(entries.length||t.status!=='completed')this.queueReply(`${c.id}:${t.id}`,this.t`${c.title}\nوضعیت: ${this.t(terminalLabels[t.status])}`,entries,{threadId:c.id,cwd:r.thread?.cwd,turnId:t.id});
    }captured.push(t.id);
   }}
-  if(progress&&progressCursor)this.state.data.progressCursors[c.id]=Object.fromEntries(r.turns.map(t=>[t.id,progressCursor[t.id]||[]]));
-  if(replies)this.state.data.replyCursors[c.id]=Object.fromEntries(Object.entries(replies).filter(([id])=>r.turns.some(t=>id.startsWith(t.id+':'))));
+  const cursorTurns=r.turns.map(t=>t.id);
+  if(r.reducedTurnWindow){
+   // An omitted turn can reappear on the next full read.
+   const savedTurns=[...Object.keys(progressCursor??{}),...Object.keys(replies??{}).map(key=>key.split(':',1)[0])];
+   for(const id of savedTurns){
+    if(cursorTurns.length>=RECENT_TURNS)break;
+    if(!cursorTurns.includes(id))cursorTurns.push(id);
+   }
+  }
+  if(progress&&progressCursor)this.state.data.progressCursors[c.id]=Object.fromEntries(cursorTurns.map(id=>[id,progressCursor[id]||[]]));
+  if(replies){
+   const entries=Object.entries(replies);
+   this.state.data.replyCursors[c.id]=Object.fromEntries(cursorTurns.flatMap(turnId=>entries.filter(([id])=>id.startsWith(turnId+':'))));
+  }
   this.state.data.capturedFinals[c.id]=captured.slice(-512);this.state.data.seen[c.id]=`${latest.id}:${latest.status}`;this.state.save();
  }}catch{this.connected=false;const old=this.client;this.client=null;if(old)await old.close();}await this.outbox.flush();}
 }

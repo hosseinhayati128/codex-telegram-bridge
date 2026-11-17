@@ -1,5 +1,6 @@
 import test from 'node:test';import assert from 'node:assert/strict';import fs from 'node:fs';import path from 'node:path';
 import {State} from '../state.mjs';import {Controller} from '../controller.mjs';import {Desktop} from '../desktop.mjs';
+import {McpClient} from '../mcp-client.mjs';
 const A='10000000-0000-4000-8000-000000000001',B='10000000-0000-4000-8000-000000000002';
 const msg=(id,text,phase='commentary')=>({id,type:'agentMessage',phase,text});
 const turn=(id,items,status='inProgress')=>({id,status,items});
@@ -28,6 +29,34 @@ test('restart retries captured progress without duplicates; quiet cancels only u
 test('legacy saved progress preference without cursor primes rather than dumping past messages',async()=>{const f=fixture();f.state.data.updatesByThread={ [A]:'progress' };f.setTurns([turn('old',[msg('past','past'),{type:'commandExecution'}])]);await f.d.poll();assert.equal(f.sent.length,0);f.setTurns([turn('new',[msg('future','future'),{type:'commandExecution'}])]);await f.d.poll();assert.equal(f.sent.length,1);});
 
 test('desktop message reads use the actual adapter maximum of 20000 characters',async()=>{const f=fixture(),d=new Desktop(f.config,f.state,async()=>{});let args;d.connect=async()=>({call:async(name,a)=>{args=a;return{thread:{id:A},turns:[]};}});await d.read(A);assert.equal(args.includeOutputs,false);assert.equal(args.maxOutputCharsPerItem,20000);});
+
+test('an oversized history read retries fewer turns without replaying omitted messages later',async()=>{
+ const f=fixture(),d=new Desktop(f.config,f.state,f.notify);
+ const client=Object.create(McpClient.prototype);
+ const closed={type:'reasoning',id:'closed'};
+ const older=turn('older',[msg('old-progress','old progress'),msg('old-reply','old reply','final_answer'),closed]);
+ const turns=[turn('current',[]),turn('second',[]),turn('third',[]),older];
+ let oversized=false;
+ const limits=[];
+ client.request=async(_method,{arguments:{threadId,turnLimit}})=>{
+  if(threadId===A)limits.push(turnLimit);
+  if(threadId===A&&oversized&&turnLimit===4)return{isError:true,content:[{type:'text',text:'The response exceeds the size limit.'}]};
+  return{content:[{type:'text',text:JSON.stringify({thread:{id:threadId},turns:threadId===A?turns.slice(0,turnLimit):[]})}]};
+ };
+ d.connect=async()=>client;
+ await d.configureUpdates(A,'progress');
+ await d.poll();
+ limits.length=0;
+ oversized=true;
+ turns[0].items.push(msg('answer','new reply','final_answer'),closed);
+ await d.poll();
+ assert.deepEqual(limits,[4,3]);
+ assert.equal(d.connected,true);
+ assert.deepEqual(f.sent.map(s=>s.text.split('\n').at(-1)),['new reply']);
+ oversized=false;
+ await d.poll();
+ assert.deepEqual(f.sent.map(s=>s.text.split('\n').at(-1)),['new reply']);
+});
 
 test('enabling while an older poll is in flight cannot replay progress from that stale snapshot',async()=>{const f=fixture();let release,calls=0;f.d.read=async id=>({thread:{id},turns:id!==A?[]:++calls===1?await new Promise(r=>release=r):[turn('current',[msg('baseline','baseline'),{type:'commandExecution'}])]});const polling=f.d.poll();await f.d.configureUpdates(A,'progress');release([turn('stale',[msg('before','before enabling'),{type:'commandExecution'}])]);await polling;assert.equal(f.sent.filter(s=>s.kind==='progress').length,0);});
 
