@@ -1,4 +1,13 @@
 const english={
+  "انتخاب مدل همین چت": "Choose the model for this chat",
+  "🤖 مدل": "🤖 Model",
+  "مدل تلگرام: ": "Telegram model: ",
+  "فهرست مدل‌ها در دسترس نیست؛ Codex را باز کن تا فهرست مدل‌ها به‌روز شود و دوباره /model را بفرست.": "The model list is unavailable. Open Codex to refresh its model list, then try /model again.",
+  "🤖 مدل «{0}»\n\nتنظیم فعلی تلگرام: {1}\n\nانتخاب از پیام بعدی همین چت اعمال می‌شود. اگر سطح تلاش با مدل سازگار نباشد، از تنظیم پیش‌فرض مدل استفاده می‌شود.": "🤖 Model for “{0}”\n\nCurrent Telegram setting: {1}\n\nApplies from the next message in this chat. If the saved effort is incompatible, the model default will be used.",
+  "این مدل دیگر در فهرست نیست؛ /model را برای انتخاب دوباره باز کن.": "That model is no longer listed. Open /model to choose again.",
+  "مدل تلگرام برای «{0}»: {1}. از پیام بعدی همین چت اعمال می‌شود.": "Telegram model for “{0}”: {1}. Applies from the next message in this chat.",
+  "سطح تلاش قبلی با مدل سازگار نبود؛ از پیش‌فرض مدل استفاده می‌شود.": "The previous effort was incompatible; the model default will be used.",
+  "این سطح تلاش برای مدل انتخاب‌شده پشتیبانی نمی‌شود؛ /effort را باز کن.": "That effort is not supported by the selected model. Open /effort.",
   "🌐 زبان ربات / Bot language": "🌐 Bot language / زبان ربات",
   "زبان منوها و اعلان‌های ربات را انتخاب کن. زبان پیام‌های ChatGPT و محتوای چت تغییر نمی‌کند.": "Choose the language of bot menus and notifications. ChatGPT messages and chat content keep their own language.",
   "زبان ربات: ": "Bot language: ",

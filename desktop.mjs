@@ -86,6 +86,15 @@ export class Desktop {
   }
   return{rows,continuation:buffer.length||!finished?{cursor,buffer,finished,cursors:[...cursors]}:null,scannedRows,sidebarLimited:sidebar};
  }
+ async listModels(){const client=await this.connect();if(!client.modelOverride)throw new Error('Desktop model override is unavailable');
+  // shortcut: use Codex's local catalog until the desktop exposes a model-list tool.
+  const catalog=JSON.parse(fs.readFileSync(path.join(this.config.codexHome,'models_cache.json'),'utf8'));
+  if(!Array.isArray(catalog.models))throw new Error('Invalid model catalog');
+  const models=catalog.models.filter(m=>m.visibility==='list').map(m=>{const efforts=m.supported_reasoning_levels?.map(r=>r.effort),allowed=['none','minimal','low','medium','high','xhigh','max','ultra'];
+   if(typeof m.slug!=='string'||!/^[-a-zA-Z0-9._:/]{1,128}$/.test(m.slug)||m.slug==='default'||typeof m.display_name!=='string'||!m.display_name.trim()||/[\x00-\x1f\x7f]/.test(m.display_name)||!Array.isArray(efforts)||!efforts.length||!efforts.every(e=>allowed.includes(e))||!efforts.includes(m.default_reasoning_level))throw new Error('Invalid model entry');
+   return{id:m.slug,label:m.display_name,efforts,defaultEffort:m.default_reasoning_level};
+  });if(!models.length||new Set(models.map(m=>m.id)).size!==models.length)throw new Error('Invalid model catalog');return models;
+ }
  async createChat(expected,prompt){const project=(await this.listProjects()).find(p=>p.projectId===expected.projectId&&p.path===expected.path);if(!project||typeof prompt!=='string'||!prompt.trim()||prompt.length>8000)throw new Error('Invalid or changed local project');const client=await this.connect();this.assertLiveEndpoint(client);return client.call('create_thread',{prompt,target:{type:'project',projectId:project.projectId,environment:{type:'local'}}},this.config.callerThreadId);}
  watchChat(chat){if(!/^[0-9a-f-]{36}$/.test(chat.id)||typeof chat.title!=='string'||typeof chat.alias!=='string')throw new Error('Invalid selected chat');if(!this.config.chats.some(c=>c.id===chat.id))this.config.chats.push({...chat});this.state.data.watchedChats=this.config.chats.map(c=>({...c}));this.state.save();this.onWatch?.(this.config.chats.map(c=>c.id));}
  async attach(pipe){
@@ -103,6 +112,7 @@ export class Desktop {
   if(old)await old.close();
  }
  async connect(){
+  if(this.config.requireLiveEndpoint&&this.pipe&&!this.config.endpointValidator(this.pipe))await this.detach(this.pipe);
   if(this.client)return this.client;
   if(this.opening)return this.opening;
   this.opening=(async()=>{
@@ -142,8 +152,9 @@ export class Desktop {
    return limit===turnLimit?result:{...result,reducedTurnWindow:true};
   }
  }
- async sendText(id,text,{thinking}={}){
+ async sendText(id,text,{thinking,model}={}){
   if(thinking!==undefined&&!['low','medium','high','xhigh','max','ultra'].includes(thinking))throw new Error('Invalid effort');
+  if(model!==undefined){const selected=(await this.listModels()).find(m=>m.id===model);if(!selected||thinking!==undefined&&!selected.efforts.includes(thinking))throw new Error('Invalid model or effort');thinking??=selected.defaultEffort;}
   const primeReplies=!this.state.data.replyCursors[id],r=await this.read(id,primeReplies?RECENT_TURNS:1);
   if(r.thread.status?.activeFlags?.length)throw new Error('Answer native pending request first');
   const c=await this.connect();
@@ -153,7 +164,7 @@ export class Desktop {
    this.baselineReplies(id,r.turns??[]);
    this.state.save();
   }
-  return c.call('send_message_to_thread',{threadId:id,hostId:'local',prompt:text,...(thinking?{thinking}:{})},this.config.callerThreadId);
+  return c.call('send_message_to_thread',{threadId:id,hostId:'local',prompt:text,...(model?{model}:{}),...(thinking?{thinking}:{})},this.config.callerThreadId);
  }
  async lastAnswer(id){
   const r=await this.read(id,3);

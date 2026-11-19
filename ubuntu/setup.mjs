@@ -8,7 +8,7 @@ import {Writable} from 'node:stream';
 import {parseArgs} from 'node:util';
 import {TelegramApi} from '../telegram.mjs';
 import {atomicWrite} from '../state.mjs';
-import {privateDirectory,readPairing,sandboxArgs,verifyInstallation} from './runtime.mjs';
+import {privateDirectory,readPairing,verifyInstallation,appToolsAt,checkIsolation} from './runtime.mjs';
 import {launchFiles} from './launch-files.mjs';
 import {pairOwner} from './pair.mjs';
 
@@ -33,12 +33,6 @@ function onPath(name) {
  }
 }
 
-function appToolsAt(codexHome,packageFiles) {
- const cache=path.join(codexHome,'plugins/cache/openai-bundled/codex-app-tools');
- const versions=fs.existsSync(cache)?fs.readdirSync(cache).sort((a,b)=>b.localeCompare(a,undefined,{numeric:true})):[];
- return [...versions.map(version=>path.join(cache,version,'server.mjs')),
-  ...packageFiles.filter(file=>file.endsWith('/codex-app-tools/server.mjs'))].find(file=>fs.existsSync(file)&&fs.statSync(file).isFile());
-}
 
 async function ask(prompt,hidden=false) {
  if(!process.stdin.isTTY)throw new Error('Run setup in the Ubuntu desktop terminal.');
@@ -84,24 +78,6 @@ function writeNew(file,body,mode=0o600) {
  }
 }
 
-function checkIsolation(config) {
- const name='.probe-'+randomUUID();
- const privateProbe=path.join(config.stateRoot,'private',name);
- const inputProbe=path.join(config.transferRoot,name);
- try {
-  fs.writeFileSync(privateProbe,'private probe',{flag:'wx',mode:0o600});
-  fs.writeFileSync(inputProbe,'transfer probe',{flag:'wx',mode:0o600});
-  const manager=spawnSync(config.systemctl,['--user','show-environment'],{stdio:'ignore',timeout:5000});
-  if(manager.status!==0)throw new Error('Run setup inside the Ubuntu desktop user session.');
-  const probe='test ! -e "$1" && test -r "$2" && ! (printf x > "$2") && ! "$3" --user show-environment';
-  const isolated=spawnSync(config.bubblewrap,sandboxArgs(config,'/bin/sh',['-c',probe,'probe',privateProbe,inputProbe,config.systemctl]),{stdio:'ignore',timeout:8000});
-  if(isolated.status!==0)throw new Error('Bubblewrap did not isolate private files and the user service manager.');
-  const version=spawnSync(config.bubblewrap,sandboxArgs(config,config.realCli,['--version']),{stdio:'ignore',timeout:8000});
-  if(version.status!==0)throw new Error('Codex could not start inside the Ubuntu bridge launcher.');
- } finally {
-  for(const file of [privateProbe,inputProbe])if(fs.existsSync(file))fs.unlinkSync(file);
- }
-}
 
 async function setup() {
  const {values}=parseArgs({options:{

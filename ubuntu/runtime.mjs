@@ -1,3 +1,5 @@
+import {spawnSync} from 'node:child_process';
+import {randomUUID} from 'node:crypto';
 import fs from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
@@ -104,4 +106,30 @@ export async function startBroker(config,onConnection) {
   });
  });
  return server;
+}
+
+export function appToolsAt(codexHome,packageFiles) {
+ const cache=path.join(codexHome,'plugins/cache/openai-bundled/codex-app-tools');
+ const versions=fs.existsSync(cache)?fs.readdirSync(cache).sort((a,b)=>b.localeCompare(a,undefined,{numeric:true})):[];
+ return [...packageFiles.filter(file=>file.endsWith('/codex-app-tools/server.mjs')),
+  ...versions.map(version=>path.join(cache,version,'server.mjs'))].find(file=>fs.existsSync(file)&&fs.statSync(file).isFile());
+}
+
+export function checkIsolation(config) {
+ const name='.probe-'+randomUUID();
+ const privateProbe=path.join(config.stateRoot,'private',name);
+ const inputProbe=path.join(config.transferRoot,name);
+ try {
+  fs.writeFileSync(privateProbe,'private probe',{flag:'wx',mode:0o600});
+  fs.writeFileSync(inputProbe,'transfer probe',{flag:'wx',mode:0o600});
+  const manager=spawnSync(config.systemctl,['--user','show-environment'],{stdio:'ignore',timeout:5000});
+  if(manager.status!==0)throw new Error('Run setup inside the Ubuntu desktop user session.');
+  const probe='test ! -e "$1" && test -r "$2" && ! (printf x > "$2") && ! "$3" --user show-environment';
+  const isolated=spawnSync(config.bubblewrap,sandboxArgs(config,'/bin/sh',['-c',probe,'probe',privateProbe,inputProbe,config.systemctl]),{stdio:'ignore',timeout:8000});
+  if(isolated.status!==0)throw new Error('Bubblewrap did not isolate private files and the user service manager.');
+  const version=spawnSync(config.bubblewrap,sandboxArgs(config,config.realCli,['--version']),{stdio:'ignore',timeout:8000});
+  if(version.status!==0)throw new Error('Codex could not start inside the Ubuntu bridge launcher.');
+ } finally {
+  for(const file of [privateProbe,inputProbe])if(fs.existsSync(file))fs.unlinkSync(file);
+ }
 }

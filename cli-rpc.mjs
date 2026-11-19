@@ -10,6 +10,7 @@ export class CliRpc extends EventEmitter {
     this.next = 1;
     this.child = spawn(executable, args, { cwd, env, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
     this.child.stderr.resume();
+    this.child.stdin.on('error',e=>this.rejectPending(e));
     createInterface({ input: this.child.stdout }).on('line', line => {
       let m;
       try { m = JSON.parse(line); } catch { return; }

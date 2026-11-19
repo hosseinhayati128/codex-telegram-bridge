@@ -72,7 +72,7 @@ const acceptConnection=async stream=>{
   channel.on('close',()=>{
    const endpoint=connections.get(route)?.endpoint;
    connections.delete(route);
-   if(ubuntu&&endpoint&&![...connections.values()].some(c=>c.endpoint===endpoint))desktop.detach(endpoint).catch(()=>{});
+   if(ubuntu&&endpoint&&![...connections.values()].some(c=>c.endpoint===endpoint)){const fallback=[...connections.values()].find(c=>ubuntu.desktopEndpoint(c.endpoint));(fallback?desktop.attach(fallback.endpoint):desktop.detach(endpoint)).catch(()=>{});}
    for(const[t,r]of tickets)if(r===route)tickets.delete(t);
    delivery.disconnect(route).catch(()=>{});
    for(const[id,op]of operations)if(op.route===route){clearTimeout(op.timer);operations.delete(id);op.reject(new Error('Backend disconnected; response uncertain'));}
@@ -81,7 +81,7 @@ const acceptConnection=async stream=>{
 };
 const broker=ubuntu?await ubuntu.startBroker(config,acceptConnection):startBroker(path.join(root,'PipeBroker.exe'),config.pipeName,acceptConnection);
 broker.on('error',()=>process.exit(1));broker.on('exit',()=>{if(!stopping)process.exit(1);});
-function health(){atomicWrite(path.join(privateDir,'health.json'),{version:1,release:root,pid:process.pid,boot,atUtc:new Date().toISOString(),telegramConnected,lastPoll,desktopConnected:desktop.connected,appToolsLinked:!!desktop.pipe,nativeConnections:[...connections.values()].filter(c=>c.enabled).length,pendingRequests:native.active.size,pendingFiles:controller.filePending,lastError,paused:!!state.data.paused,commandMenuReady});}
+function health(){if(ubuntu)for(const c of connections.values())if(!ubuntu.desktopEndpoint(c.endpoint))c.channel.close();atomicWrite(path.join(privateDir,'health.json'),{version:1,release:root,pid:process.pid,boot,atUtc:new Date().toISOString(),telegramConnected,lastPoll,desktopConnected:desktop.connected,appToolsLinked:!!desktop.pipe,nativeConnections:[...connections.values()].filter(c=>c.enabled).length,pendingRequests:native.active.size,pendingFiles:controller.filePending,lastError,paused:!!state.data.paused,commandMenuReady});}
 health();const heartbeat=setInterval(health,10000);
 const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 async function pollTelegram(){let verified=false,backoff=1000,announced=false;

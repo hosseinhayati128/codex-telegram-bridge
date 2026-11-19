@@ -3,12 +3,12 @@ export const MENU_BUTTON=Object.freeze(key('home','⌂ منوی اصلی'));
 export const menuButton=t=>key('home',t('⌂ منوی اصلی'));
 const escape=text=>String(text).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'})[c]);
 const sections=['home','chats','settings','language','files','control','help'];
-const scoped={effort:'effort-menu',updates:'updates-menu',output:'files-menu',last:'last'};
+const scoped={model:'model-menu',effort:'effort-menu',updates:'updates-menu',output:'files-menu',last:'last'};
 const actions=['projects','recent','status','requests','pause','resume'];
 const groups=[
  ['منو',[['menu','بازکردن منوی اصلی'],['start','شروع و نمایش منوی اصلی'],['help','راهنمای دستورها']]],
  ['چت‌ها',[['threads','پروژه‌ها و انتخاب چت'],['projects','فهرست پروژه‌ها'],['recent','چت‌های اخیر'],['use','انتخاب چت با نام کوتاه',' نام'],['last','آخرین پاسخ چت'],['say','ارسال متن به چت انتخابی',' متن'],['cancel','انصراف از ساخت چت']]],
- ['تنظیمات',[['effort','سطح تلاش Codex در این چت'],['updates','نوع اعلان‌های این چت']]],
+ ['تنظیمات',[['model','انتخاب مدل همین چت'],['effort','سطح تلاش Codex در این چت'],['updates','نوع اعلان‌های این چت']]],
  ['فایل‌ها',[['files','دریافت فایل‌های خروجی'],['get','دریافت یک فایل',' مسیرکامل']]],
  ['کنترل',[['status','وضعیت اتصال، چت و صف فایل'],['requests','درخواست‌های منتظر پاسخ'],['pause','توقف موقت ارسال دستور و پاسخ'],['resume','ادامهٔ کنترل از تلگرام']]],
 ];
@@ -61,7 +61,8 @@ export class BotUi {
     keys=[[key('lang:fa','فارسی'+(this.data.botLanguage==='fa'?' ✓':'')),key('lang:en','English'+(this.data.botLanguage==='en'?' ✓':''))]];break;
    case 'settings':
     text=this.t`<b>⚙ تنظیمات همین چت</b>\n\n${context}\nاعلان‌ها: ${updates}\nسطح تلاش: ${effort}${pauseHint}`;
-    keys=paused?[]:[[key('updates:'+chat.id,this.t('🔔 اعلان‌ها')),key('effort:'+chat.id,this.t('🎚 سطح تلاش'))]];
+    keys=paused?[]:[[key('model:'+chat.id,this.t('🤖 مدل'))],[key('updates:'+chat.id,this.t('🔔 اعلان‌ها')),key('effort:'+chat.id,this.t('🎚 سطح تلاش'))]];
+    text+='\n'+this.t('مدل تلگرام: ')+(c.model(chat.id)||this.t('پیروی از Codex'));
     text+='\n'+this.t('زبان ربات: ')+(this.data.botLanguage==='en'?'English':'فارسی');keys.push([key('language',this.t('🌐 زبان ربات / Bot language'))]);break;
    case 'files':
     text=this.t`<b>📎 فایل‌ها</b>\n\n${context}\n\nبرای ارسال، فایل یا عکس را با کپشن و بدون Reply بفرست. برای دریافت، دکمهٔ «فایل‌های خروجی» یا دستور <code>/get مسیرکامل</code> را استفاده کن.${pauseHint}`;

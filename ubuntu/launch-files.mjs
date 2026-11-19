@@ -7,6 +7,8 @@ export function launchFiles({root,node,app,codexHome}) {
   cli:'#!/bin/sh\nexec '+quoteShell(node)+' '+quoteShell(root+'/stdio-relay.mjs')+' "$@"\n',
   desktop:[
    '#!/bin/sh',
+   'set -e',
+   quoteShell(node)+' '+quoteShell(root+'/ubuntu/refresh.mjs'),
    'export CODEX_HOME='+quoteShell(codexHome),
    'export CODEX_CLI_PATH='+quoteShell(root+'/codex-telegram-cli'),
    'export CODEX_APP_SERVER_FORCE_CLI=1',
@@ -29,4 +31,12 @@ export function launchFiles({root,node,app,codexHome}) {
    '',
   ].join('\n'),
  };
+}
+
+export function desktopEntry(source,launcher){
+ if(/[\x00-\x1f\x7f]/.test(launcher))throw new Error('Launcher path must not contain control characters.');
+ if(!/^Exec=.*$/m.test(source))throw new Error('The desktop entry has no Exec line.');
+ const quoted='"'+launcher.replace(/[\\"`$]/g,'\\$&').replaceAll('%','%%')+'"';
+ const encoded=quoted.replaceAll('\\','\\\\');
+ return source.replace(/^Exec=.*$/m,()=> 'Exec='+encoded+' %U');
 }
