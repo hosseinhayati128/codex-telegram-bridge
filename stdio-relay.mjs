@@ -5,7 +5,13 @@ const root=import.meta.dirname;let config=null;
 try{config=JSON.parse(fs.readFileSync(path.join(root,'bridge-config.json'),'utf8'));}catch{}
 const ubuntu=process.platform==='linux'?await import('./ubuntu/runtime.mjs'):null;
 if(ubuntu)ubuntu.verifyInstallation(root,config);
-const vendor=ubuntu?config.realCli:process.env.CODEX_TELEGRAM_REAL_CLI||config?.realCli;
+if(process.platform==='win32'&&config){
+ const {refreshWindowsRuntime}=await import('./windows-runtime.mjs');
+ try{await refreshWindowsRuntime(config);}
+ catch{console.error('Codex package qualification failed; native bridge controls stay disabled for an unqualified CLI.');}
+}
+const savedVendor=process.env.CODEX_TELEGRAM_REAL_CLI;
+const vendor=ubuntu?config.realCli:savedVendor&&fs.existsSync(savedVendor)?savedVendor:config?.realCli;
 if(!vendor){console.error('Vendor CLI path missing; use rollback launcher.');process.exit(1);}
 const env={...process.env};delete env.CODEX_WINDOWS_REGISTERED_CORE;delete env.CODEX_WINDOWS_SANDBOX_PACKAGE_FAMILY;delete env.CODEX_TELEGRAM_REAL_CLI;
 const args=process.argv.slice(2);

@@ -14,7 +14,7 @@ import {Desktop} from '../desktop.mjs';
 function temp(t){const dir=fs.mkdtempSync(path.join(os.tmpdir(),'bridge-startup-'));t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));return dir;}
 
 test('adapter discovery prefers the stable package path and falls back to a live cache version',t=>{
- const dir=temp(t),home=path.join(dir,'home'),cached=path.join(home,'plugins/cache/openai-bundled/codex-app-tools/1.2/server.mjs'),packaged=path.join(dir,'pkg/codex-app-tools/server.mjs');
+ const dir=temp(t),home=path.join(dir,'home'),cached=path.join(home,'plugins/cache/openai-bundled/codex-app-tools/1.2/server.mjs'),packaged=path.join(dir,'pkg/codex-app-tools/server.mjs').replaceAll(path.sep,'/');
  for(const file of [cached,packaged]){fs.mkdirSync(path.dirname(file),{recursive:true});fs.writeFileSync(file,'');}
  assert.equal(appToolsAt(home,[packaged]),packaged);
  fs.unlinkSync(packaged);assert.equal(appToolsAt(home,[packaged]),cached);

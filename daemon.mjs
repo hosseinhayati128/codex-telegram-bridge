@@ -14,6 +14,11 @@ if(ubuntu){
  config.requireLiveEndpoint=true;
  config.endpointValidator=ubuntu.desktopEndpoint;
 }
+if(process.platform==='win32'){
+ const {refreshWindowsRuntime}=await import('./windows-runtime.mjs');
+ try{await refreshWindowsRuntime(config);}
+ catch{console.error('Codex package qualification failed; Desktop reconnect will retry.');}
+}
 const privateDir=path.join(config.stateRoot,'private');fs.mkdirSync(privateDir,{recursive:true});const lockFile=path.join(privateDir,'daemon-lock.json'),boot=randomUUID();
 if(fs.existsSync(lockFile)){
  let prior;try{prior=JSON.parse(fs.readFileSync(lockFile,'utf8'));}catch{throw new Error('Unrecognized daemon lock; manual review required');}
@@ -48,6 +53,11 @@ const remote=op=>new Promise((resolve,reject)=>{
 const controller=new Controller({api,owner,chats:config.chats,state,native,desktop,attachments,remote,status});
 const acceptConnection=async stream=>{
  try{const channel=await serverHandshake(stream,key),route=randomUUID();let registered=false;
+  if(process.platform==='win32'){
+   const {refreshWindowsRuntime}=await import('./windows-runtime.mjs');
+   try{await refreshWindowsRuntime(config);}catch{}
+   if(stream.destroyed)return;
+  }
   channel.on('message',m=>{
    if(!registered){if(m?.type!=='hello'||typeof m.generation!=='string'){channel.close();return;}registered=true;
     const enabled=m.nativeEnabled===true&&m.cliHash===config.expectedCliSha256;

@@ -30,6 +30,8 @@ Open `/menu` → Settings → Bot language and choose **فارسی** or **Englis
 
 The Windows launcher, broker, supervisor, and installation helpers are retained as source. Fresh Windows provisioning requires local Codex paths, a qualified build, and locally prepared DPAPI pairing files. The installed Windows configuration is machine-specific.
 
+On Windows, the service and relay rediscover the registered Codex Store package at startup. If an app update removes the saved CLI or App Tools adapter, the service also retries discovery when reconnecting. A changed CLI is accepted only from the registered OpenAI.Codex Store package under WindowsApps after a Windows sandbox command, app-server initialization, and a read-only model-list check succeed. The refresh affects the running configuration, so the installation receipt and rollback hashes remain valid. Custom CLI installations use their explicitly qualified configuration.
+
 ## Tests
 
 Run `node --test`. The Unix socket and credential-permissions test runs on Linux.

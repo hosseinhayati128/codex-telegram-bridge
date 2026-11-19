@@ -1,6 +1,7 @@
 import {translator} from './i18n.mjs';
 import fs from 'node:fs';import path from 'node:path';import {createHash} from 'node:crypto';import {McpClient} from './mcp-client.mjs';import {atomicWrite} from './state.mjs';import {Outbox} from './delivery.mjs';
 import {markdownImageParts,toolImagePart} from './images.mjs';
+import {refreshWindowsRuntime} from './windows-runtime.mjs';
 const RECENT_TURNS=4;
 const publicProgress=i=>i.type==='agentMessage'&&['commentary','partial_answer'].includes(i.phase)&&typeof i.id==='string'&&typeof i.text==='string';
 const progressSnapshot=(root,threadId,turns)=>Object.fromEntries(turns.map(t=>[t.id,t.items.filter(i=>publicProgress(i)||toolImagePart(root,threadId,t.id,i)).map(i=>i.id)]));
@@ -112,6 +113,8 @@ export class Desktop {
   if(old)await old.close();
  }
  async connect(){
+  if(process.platform==='win32'&&this.config.appTools&&this.config.realCli&&
+   (!fs.existsSync(this.config.appTools)||!fs.existsSync(this.config.realCli)))await refreshWindowsRuntime(this.config);
   if(this.config.requireLiveEndpoint&&this.pipe&&!this.config.endpointValidator(this.pipe))await this.detach(this.pipe);
   if(this.client)return this.client;
   if(this.opening)return this.opening;
