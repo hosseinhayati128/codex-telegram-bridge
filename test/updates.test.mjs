@@ -58,6 +58,51 @@ test('an oversized history read retries fewer turns without replaying omitted me
  assert.deepEqual(f.sent.map(s=>s.text.split('\n').at(-1)),['new reply']);
 });
 
+test('an oversized single turn retries without tool previews and keeps its public reply',async()=>{
+ const f=fixture(),d=new Desktop(f.config,f.state,f.notify),client=Object.create(McpClient.prototype),reads=[];
+ client.request=async(_method,{arguments:args})=>{
+  reads.push([args.turnLimit,args.maxOutputCharsPerItem]);
+  if(args.maxOutputCharsPerItem)return{isError:true,content:[{type:'text',text:'The response exceeds the size limit.'}]};
+  return{content:[{type:'text',text:JSON.stringify({thread:{id:A},turns:[turn('large',[msg('reply','complete public reply','final_answer')],'completed')]})}]};
+ };
+ d.connect=async()=>client;
+ const result=await d.read(A,4);
+ assert.deepEqual(reads,[[4,20000],[3,20000],[2,20000],[1,20000],[1,0]]);
+ assert.equal(result.turns[0].items[0].text,'complete public reply');
+ assert.equal(result.reducedTurnWindow,true);
+});
+
+test('an oversized watched chat cannot cancel an in-flight Recent Chats request',async()=>{
+ const f=fixture(),d=new Desktop(f.config,f.state,f.notify),client=Object.create(McpClient.prototype);
+ let finishMenu,readStarted,menuStarted,releaseRead,closed=false;
+ const reading=new Promise(resolve=>readStarted=resolve),menuReading=new Promise(resolve=>menuStarted=resolve),readGate=new Promise(resolve=>releaseRead=resolve);
+ client.request=async(_method,{name,arguments:args})=>{
+  if(name==='list_threads'){
+   menuStarted();
+   await new Promise(resolve=>finishMenu=resolve);
+   if(closed)throw new Error('Codex App Tools unavailable');
+   return{content:[{type:'text',text:JSON.stringify({threads:[{id:A,title:'Recent chat',kind:'codex',hostId:'local'}]})}]};
+  }
+  if(args.threadId===A){
+   readStarted();
+   await readGate;
+   return{isError:true,content:[{type:'text',text:'The response exceeds the size limit.'}]};
+  }
+  return{content:[{type:'text',text:JSON.stringify({thread:{id:B},turns:[]})}]};
+ };
+ client.close=async()=>{closed=true;};
+ d.client=client;
+ const polling=d.poll();
+ await reading;
+ const menu=d.listChatPage();
+ await menuReading;
+ releaseRead();
+ await polling;
+ finishMenu();
+ assert.deepEqual((await menu).rows,[{id:A,title:'Recent chat',projectId:null}]);
+ assert.equal(d.connected,true);
+});
+
 test('enabling while an older poll is in flight cannot replay progress from that stale snapshot',async()=>{const f=fixture();let release,calls=0;f.d.read=async id=>({thread:{id},turns:id!==A?[]:++calls===1?await new Promise(r=>release=r):[turn('current',[msg('baseline','baseline'),{type:'commandExecution'}])]});const polling=f.d.poll();await f.d.configureUpdates(A,'progress');release([turn('stale',[msg('before','before enabling'),{type:'commandExecution'}])]);await polling;assert.equal(f.sent.filter(s=>s.kind==='progress').length,0);});
 
 test('crash at outbox persistence atomically retains captured IDs even when the next snapshot adds a message',async()=>{const f=fixture();await f.d.configureUpdates(A,'progress');let crash;const save=f.state.save.bind(f.state);f.state.save=()=>{save();if(!crash&&Object.values(f.state.data.notifications).some(n=>n.kind==='progress'))crash=fs.readFileSync(f.state.file);};f.setTurns([turn('new',[msg('one','FIRST'),msg('two','SECOND'),{type:'commandExecution'}])]);await f.d.poll();assert.ok(crash);f.sent.length=0;fs.writeFileSync(f.state.file,crash);const recovered=new State(f.state.file),d=new Desktop(f.config,recovered,f.notify);d.read=f.d.read;f.setTurns([turn('new',[msg('one','FIRST'),msg('two','SECOND'),msg('three','THIRD'),{type:'commandExecution'}])]);await d.poll();assert.equal(f.sent.length,2);assert.equal(f.sent.filter(s=>s.text.includes('FIRST')).length,1);assert.equal(f.sent.filter(s=>s.text.includes('SECOND')).length,1);assert.match(f.sent[1].text,/THIRD/);});

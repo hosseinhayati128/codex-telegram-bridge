@@ -140,12 +140,16 @@ export class Desktop {
  async read(id,turnLimit=1){
   if(!this.config.chats.some(c=>c.id===id))throw new Error('Unauthorized chat');
   const client=await this.connect();
-  for(let limit=turnLimit;;limit--){
+  for(let limit=turnLimit,previewSize=20000;;){
    let result;
    try{
-    result=await client.call('read_thread',{threadId:id,hostId:'local',turnLimit:limit,includeOutputs:false,maxOutputCharsPerItem:20000},this.config.callerThreadId);
+    result=await client.call('read_thread',{threadId:id,hostId:'local',turnLimit:limit,includeOutputs:false,maxOutputCharsPerItem:previewSize},this.config.callerThreadId);
    }catch(error){
-    if(!(limit>1&&error.code==='CODEX_READ_TOO_LARGE'))throw error;
+    if(error.code!=='CODEX_READ_TOO_LARGE')throw error;
+    if(limit>1)limit--;
+    // Public replies stay complete when tool and command previews are omitted.
+    else if(previewSize)previewSize=0;
+    else throw error;
     this.assertLiveEndpoint(client);
     continue;
    }
@@ -180,7 +184,10 @@ export class Desktop {
  }
  async poll(){try{for(const c of this.config.chats){
   const progressCursor=this.state.data.progressCursors[c.id],priorReplies=this.state.data.replyCursors[c.id];
-  const r=await this.read(c.id,RECENT_TURNS),latest=r.turns?.[0];if(!latest)continue;
+  let r;
+  try{r=await this.read(c.id,RECENT_TURNS);}
+  catch(error){if(error.code==='CODEX_READ_TOO_LARGE')continue;throw error;}
+  const latest=r.turns?.[0];if(!latest)continue;
   const old=this.state.data.seen[c.id],captured=this.state.data.capturedFinals[c.id]??=[];
   const progress=this.state.data.updatesByThread[c.id]==='progress'&&progressCursor===this.state.data.progressCursors[c.id];
   if(progress&&!progressCursor)this.state.data.progressCursors[c.id]=progressSnapshot(this.config.stateRoot,c.id,r.turns);
