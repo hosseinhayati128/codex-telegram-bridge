@@ -71,14 +71,28 @@ export class Desktop {
   }
   flushProgress();
  }
- async listProjects(){const client=await this.connect(),result=await client.call('list_projects',{},this.config.callerThreadId);if(!Array.isArray(result.projects))throw new Error('Invalid project list');
+ async metadata(name,args){
+  for(let attempt=0;;attempt++){
+   const client=await this.connect();
+   try{
+    const result=await client.call(name,args,this.config.callerThreadId);
+    this.assertLiveEndpoint(client);
+    return result;
+   }catch(error){
+    if(attempt||!/^APP_TOOLS_/.test(error.code??''))throw error;
+    if(this.client===client){this.client=null;this.connected=false;}
+    await client.close();
+   }
+  }
+ }
+ async listProjects(){const result=await this.metadata('list_projects',{});if(!Array.isArray(result.projects))throw new Error('Invalid project list');
   return result.projects.filter(p=>p.projectKind==='local'&&p.hostId==='local'&&/^[0-9a-f-]{36}$/.test(p.projectId)&&typeof p.label==='string'&&typeof p.path==='string').map(p=>({projectId:p.projectId,projectKind:'local',hostId:'local',label:p.label,path:p.path}));
  }
  async listChatPage({projectId=null,continuation=null,exclude=[],take=5}={}){if(!Number.isSafeInteger(take)||take<1||take>5)throw new Error('Invalid page size');const client=await this.connect(),sidebar=client.sidebarThreadList===true,rows=[],seen=new Set(exclude),cursors=new Set(continuation?.cursors||[]),deadline=Date.now()+4000;let cursor=continuation?.cursor??null,buffer=[...(continuation?.buffer||[])],finished=continuation?.finished===true,batches=0,scannedRows=0;
   while(rows.length<take){while(buffer.length&&rows.length<take){const c=buffer.shift();if(!seen.has(c.id)){seen.add(c.id);rows.push(c);}}if(rows.length===take||finished)break;
    // Keep sparse-project scans resumable so one click cannot block bot updates.
    if(batches>=2||(batches>0&&Date.now()>=deadline))break;
-   const page=await client.call('list_threads',sidebar?{limit:50}:{mode:'history',source:'codex',hostId:'local',archived:false,limit:projectId?50:5,...(cursor?{cursor}:{})},this.config.callerThreadId);if(!Array.isArray(page.threads))throw new Error('Invalid chat page');
+   const page=await this.metadata('list_threads',sidebar?{limit:50}:{mode:'history',source:'codex',hostId:'local',archived:false,limit:projectId?50:5,...(cursor?{cursor}:{})});if(!Array.isArray(page.threads))throw new Error('Invalid chat page');
    // shortcut: sidebar API exposes only pinned and 50 recent entries; use history pagination when available.
    const threads=sidebar?[...(page.pinnedThreads||[]),...page.threads].sort((a,b)=>(b.updatedAt||0)-(a.updatedAt||0)):page.threads;
    batches++;scannedRows+=threads.length;
@@ -113,6 +127,7 @@ export class Desktop {
   if(old)await old.close();
  }
  async connect(){
+  if(this.client?.closed){this.client=null;this.connected=false;}
   if(process.platform==='win32'&&this.config.appTools&&this.config.realCli&&
    (!fs.existsSync(this.config.appTools)||!fs.existsSync(this.config.realCli)))await refreshWindowsRuntime(this.config);
   if(this.config.requireLiveEndpoint&&this.pipe&&!this.config.endpointValidator(this.pipe))await this.detach(this.pipe);

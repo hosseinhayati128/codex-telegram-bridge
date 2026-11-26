@@ -6,6 +6,33 @@ const row=(n,p=P)=>({id:id(n),title:`Chat ${n}`,kind:'codex',hostId:'local',proj
 function state(){const root=path.resolve(import.meta.dirname,'../private/test-project-menu');fs.mkdirSync(root,{recursive:true});return new State(path.join(fs.mkdtempSync(path.join(root,'case-')),'state.json'));}
 const msg=(n,text,reply)=>({update_id:n,message:{from:{id:1},chat:{id:1,type:'private'},date:Math.floor(Date.now()/1000),text,...(reply?{reply_to_message:{message_id:reply}}:{})}});
 const cb=(n,data)=>({update_id:n,callback_query:{id:String(n),from:{id:1},message:{chat:{id:1,type:'private'}},data}});
+test('project menu recovers a failed metadata request on one fresh connection',async()=>{
+ const f=fixture(),desktop=new Desktop({stateRoot:path.dirname(f.s.file),chats:f.c.chats,callerThreadId:A},f.s,async()=>{}),calls=[];
+ const clients=[
+  {call:async name=>{calls.push(name);throw Object.assign(new Error('Codex App Tools timed out'),{code:'APP_TOOLS_TIMEOUT'});},close:async()=>{}},
+  {call:async name=>{calls.push(name);return{projects:[project]};},close:async()=>{}},
+ ];
+ desktop.connect=async()=>desktop.client??=clients.shift();
+ f.c.desktop=desktop;
+ await f.c.update(msg(1,'/threads'));
+ assert.equal(f.s.get(1).state,'handled');
+ assert.deepEqual(calls,['list_projects','list_projects']);
+ assert.ok(buttons(f).some(button=>button.callback_data==='m:p:'+P));
+});
+
+test('a persistent metadata failure stops after one retry and saves its diagnostic code',async()=>{
+ const f=fixture(),desktop=new Desktop({stateRoot:path.dirname(f.s.file),chats:f.c.chats,callerThreadId:A},f.s,async()=>{});
+ let connections=0;
+ desktop.connect=async()=>desktop.client??=(()=>{
+  connections++;
+  return{call:async()=>{throw Object.assign(new Error('Codex App Tools timed out'),{code:'APP_TOOLS_TIMEOUT'});},close:async()=>{}};
+ })();
+ f.c.desktop=desktop;
+ await f.c.update(msg(1,'/threads'));
+ assert.equal(f.s.get(1).state,'failed');
+ assert.equal(connections,2);
+ assert.equal(new State(f.s.file).get(1).errorCode,'APP_TOOLS_TIMEOUT');
+});
 function fixture({failCreate=false}={}){const s=state(),sent=[],created=[],commands=[],chats=[{id:A,alias:'this',title:'Original'}];const desktop={listProjects:async()=>[project],listChatPage:async({projectId,continuation})=>{const start=continuation?.offset||0,all=Array.from({length:12},(_,i)=>row(i+1,projectId||null));return{rows:all.slice(start,start+5),continuation:start+5<all.length?{offset:start+5}:null};},watchChat:c=>{if(!chats.some(x=>x.id===c.id))chats.push(c);},createChat:async(p,prompt)=>{created.push({p,prompt});if(failCreate)throw Error('uncertain');return{threadId:id(99),hostId:'local',title:'Created'};},sendText:async(threadId,text)=>commands.push({threadId,text})};
  const c=new Controller({state:s,chats,desktop,native:{prepare:()=>null,active:new Map()},owner:{userId:1,chatId:1},api:{call:async(method,args)=>{sent.push({method,args});return{message_id:sent.length};},document:async()=>{}},status:()=> 'ready'});return{c,s,sent,created,commands,desktop};}
 const buttons=f=>f.sent.filter(x=>x.method==='sendMessage').at(-1).args.reply_markup.inline_keyboard.flat();

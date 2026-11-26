@@ -119,7 +119,11 @@ export class Controller {
     this.state.finish(id,'handled');
     if(operation.panelId&&['pause','resume'].includes(operation.kind))try{await this.ui.show('control',operation.panelId);notice='';}catch{}
    }
-  }catch{
+  }catch(error){
+   const code=/^(?:APP_TOOLS_[A-Z_]+|CODEX_READ_TOO_LARGE)$/.test(error.code??'')?error.code:
+    Number.isInteger(error.telegramCode)?'TELEGRAM_'+error.telegramCode:
+    error.message==='Telegram connection failed; write was not retried'?'TELEGRAM_CONNECTION':'OPERATION_FAILED';
+   this.state.get(id).errorCode=code;
    const uncertain=this.state.get(id)?.state==='dispatching';if(operation.kind==='create-chat'&&uncertain&&this.state.data.pendingCreation)this.state.data.pendingCreation.state='uncertain';this.state.finish(id,uncertain?'uncertain':'failed');
    notice=uncertain?this.t('تحویل دستور یا پاسخ قطعی نیست؛ پیش از ارسال دوباره، خود چت را بررسی کن. هیچ اجرای خودکاری تکرار نمی‌شود.'):this.t('کدکس فعلاً در دسترس نیست یا درخواست بسته شده است. /status را بررسی کن.');
   }

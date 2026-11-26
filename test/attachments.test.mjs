@@ -6,4 +6,41 @@ test('incoming attachment bytes are preserved under the frozen thread and prompt
 test('outgoing paths are real-path scoped, private state/remote URLs/directories are refused; changed ticket cannot upload',async()=>{const f=fixture(),file=path.join(f.cwd,'report.txt');fs.writeFileSync(file,'original');const ticket=f.files.register(A,file,f.cwd);assert.ok(ticket);f.files.consume(ticket);fs.writeFileSync(file,'changed content');await assert.rejects(()=>f.files.send(ticket,A,f.cwd),/changed|stale/i);assert.equal(f.sent.length,0);assert.throws(()=>f.files.register(A,'https://example.com/file',f.cwd),/path|scope/i);assert.throws(()=>f.files.register(A,f.cwd,f.cwd),/file/i);assert.throws(()=>f.files.register(A,f.state.file,path.dirname(f.state.file)),/private|protected/i);});
 test('UNC paths are rejected before any filesystem/network lookup',()=>{const f=fixture(),original=fs.realpathSync;let lookedUp=false;fs.realpathSync=()=>{lookedUp=true;return f.cwd;};try{assert.throws(()=>f.files.resolve(A,'\\\\untrusted-host\\share\\file.txt',f.cwd));assert.equal(lookedUp,false);}finally{fs.realpathSync=original;}});
 test('final-answer file links register only real local files, line citations/remote links are ignored, exact bytes upload once',async()=>{const f=fixture(),file=path.join(f.cwd,'result.zip');fs.writeFileSync(file,Buffer.from([0,255,1,2]));const kb=f.files.buttons(A,`[دانلود](<${file}>) [source](<${file}:12>) [web](https://example.com/f)`,f.cwd);assert.equal(kb.length,1);const token=kb[0][0].callback_data.slice(5);f.files.consume(token);await f.files.send(token,A,f.cwd);assert.deepEqual([...f.sent[0].bytes],[0,255,1,2]);assert.throws(()=>f.files.consume(token),/stale|used/i);});
+test('republishing a downloaded file offers a fresh usable button',async()=>{
+ const f=fixture(),file=path.join(f.cwd,'report.pdf'),bytes=Buffer.from('%PDF-fixture');
+ fs.writeFileSync(file,bytes);
+ const link=`[PDF](<${file}>)`;
+ const old=f.files.buttons(A,link,f.cwd)[0][0].callback_data.slice(5);
+ f.files.consume(old);
+ await f.files.send(old,A,f.cwd);
+ const buttons=f.files.buttons(A,link,f.cwd);
+ assert.equal(buttons.length,1);
+ const fresh=buttons[0][0].callback_data.slice(5);
+ assert.notEqual(fresh,old);
+ assert.equal(f.files.buttons(A,link,f.cwd)[0][0].callback_data,'file:'+fresh);
+ assert.throws(()=>f.files.consume(old),/stale|used/i);
+ f.files.consume(fresh);
+ await f.files.send(fresh,A,f.cwd);
+ assert.deepEqual(f.sent.map(x=>x.bytes),[bytes,bytes]);
+});
+
+test('an uncertain upload can be requested again without reopening its old ticket',async()=>{
+ const f=fixture(),file=path.join(f.cwd,'report.pdf');
+ fs.writeFileSync(file,'%PDF-fixture');
+ const link=`[PDF](<${file}>)`;
+ const old=f.files.buttons(A,link,f.cwd)[0][0].callback_data.slice(5),send=f.api.document;
+ f.api.document=async()=>{throw new Error('Upload acknowledgement lost');};
+ f.files.consume(old);
+ await assert.rejects(()=>f.files.send(old,A,f.cwd),/acknowledgement/);
+ const buttons=f.files.buttons(A,link,f.cwd);
+ assert.equal(buttons.length,1);
+ const fresh=buttons[0][0].callback_data.slice(5);
+ assert.notEqual(fresh,old);
+ await assert.rejects(()=>f.files.send(old,A,f.cwd),/stale/i);
+ f.api.document=send;
+ f.files.consume(fresh);
+ await f.files.send(fresh,A,f.cwd);
+ assert.equal(f.sent.length,1);
+});
+
 test('Telegram getFile download is bounded and connection errors do not reveal tokens',async()=>{const token='123456:abcdefghijklmnopqrstuvwxyz_123456789',root=path.resolve(import.meta.dirname,'../private/test-telegram-files');fs.mkdirSync(root,{recursive:true});const dest=path.join(fs.mkdtempSync(path.join(root,'case-')),'x');let calls=0;const api=new TelegramApi(token,async()=>++calls===1?new Response(JSON.stringify({ok:true,result:{file_path:'documents/file_1.bin',file_size:5}})):new Response(new Uint8Array([1,2,3,4,5])));const result=await api.download('file-id',dest,10);assert.equal(result.bytes,5);assert.deepEqual([...fs.readFileSync(dest)],[1,2,3,4,5]);const broken=new TelegramApi(token,async()=>{throw Error('https://api.telegram.org/bot'+token);});await assert.rejects(()=>broken.download('f',dest+'2',10),e=>!e.message.includes(token));});
